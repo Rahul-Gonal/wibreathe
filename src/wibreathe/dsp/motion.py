@@ -7,6 +7,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, List, Optional, Sequence
 
+from wibreathe.io.parser import CSIFrame
+
 
 @dataclass
 class MotionState:
@@ -30,9 +32,13 @@ class MotionDetector:
         multiplier_enter: float = 3.5,
         multiplier_exit: float = 2.0,
         min_duration_sec: float = 1.0,
+        low_threshold: Optional[float] = None,
+        high_threshold: Optional[float] = None,
+        window_duration_s: Optional[float] = None,
     ):
         self.sample_rate_hz = sample_rate_hz
-        self.window_samples = int(round(short_window_sec * sample_rate_hz))
+        win_sec = window_duration_s if window_duration_s is not None else short_window_sec
+        self.window_samples = int(round(win_sec * sample_rate_hz))
         self.step_samples = int(round(step_sec * sample_rate_hz))
         self.multiplier_enter = multiplier_enter
         self.multiplier_exit = multiplier_exit
@@ -44,11 +50,17 @@ class MotionDetector:
         # Calibrated baseline references
         self.baseline_median: float = 0.05
         self.baseline_mad: float = 0.02
+        self.low_threshold: float = low_threshold if low_threshold is not None else 0.04
+        self.high_threshold: float = high_threshold if high_threshold is not None else 0.12
         self._update_thresholds()
 
         self.is_moving: bool = False
         self._motion_time_accum: float = 0.0
         self._still_time_accum: float = 0.0
+
+        # Multi-frame inter-carrier MAD tracking for add_frame
+        self._prev_frame_amps: Optional[List[float]] = None
+        self.current_mad: float = 0.0
 
     def _update_thresholds(self) -> None:
         sigma = 1.4826 * max(1e-5, self.baseline_mad)
@@ -68,6 +80,27 @@ class MotionDetector:
         self.is_moving = False
         self._motion_time_accum = 0.0
         self._still_time_accum = 0.0
+        self._prev_frame_amps = None
+        self.current_mad = 0.0
+
+    def add_frame(self, frame: CSIFrame) -> float:
+        """Compute inter-frame Mean Absolute Deviation across all subcarriers."""
+        amps = frame.amplitudes
+        if not amps:
+            return self.current_mad
+
+        if self._prev_frame_amps is None or len(self._prev_frame_amps) != len(amps):
+            self._prev_frame_amps = list(amps)
+            self.current_mad = 0.0
+            return 0.0
+
+        # Inter-frame subcarrier amplitude differences
+        diffs = [abs(a - b) for a, b in zip(amps, self._prev_frame_amps)]
+        self._prev_frame_amps = list(amps)
+        mad = sum(diffs) / len(diffs)
+        self.current_mad = mad
+        self.push_sample(mad)
+        return mad
 
     def push_sample(self, val: float) -> MotionState:
         """Add a single broadband amplitude sample and return current state."""

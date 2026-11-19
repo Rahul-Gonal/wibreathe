@@ -225,6 +225,15 @@ class SyntheticGenerator:
             current_time_s += self.dt
             packet_id += 1
 
+    def generate_frames(
+        self,
+        duration_sec: float = 60.0,
+        scenario: SyntheticScenario = SyntheticScenario.STILL,
+        target_bpm: float = 15.0,
+    ) -> List[CSIFrame]:
+        """Convenience method returning a list of CSIFrame objects."""
+        return [f for f, _ in self.generate_stream(duration_sec, scenario, target_bpm)]
+
     def generate_csv_and_labels(
         self,
         csv_output_path: str | Path,

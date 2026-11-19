@@ -37,11 +37,13 @@ class SystemConfig:
 @dataclass
 class SubcarrierConfig:
     raw_subcarrier_count: int = 64
+    layout: str = "lltf_ht20"
     null_indices: List[int] = field(
         default_factory=lambda: [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]
     )
     selection_method: str = "variance"  # variance, snr, pca, mean
     num_selected: int = 8
+    top_k: int = 8
 
     def validate(self) -> None:
         valid_methods = {"variance", "snr", "pca", "mean"}
@@ -57,7 +59,9 @@ class SubcarrierConfig:
 class FilterConfig:
     hampel_window_samples: int = 7
     hampel_n_sigmas: float = 3.0
-    detrend_method: str = "median"  # median, highpass
+    min_deviation_floor: Optional[float] = None
+    relative_floor_ratio: float = 0.05
+    detrend_method: str = "linear"  # linear, mean, median
     detrend_window_sec: float = 10.0
     bandpass_low_hz: float = 0.1
     bandpass_high_hz: float = 0.5
@@ -86,6 +90,8 @@ class EstimationConfig:
     min_peak_prominence: float = 0.05
     min_peak_distance_sec: float = 2.0
     min_confidence_score: float = 35.0
+    min_bpm: float = 6.0
+    max_bpm: float = 30.0
 
     def validate(self) -> None:
         if self.window_length_sec <= 0:
@@ -103,12 +109,13 @@ class MotionConfig:
     multiplier_mad_enter: float = 3.5
     multiplier_mad_exit: float = 2.0
     min_duration_sec: float = 1.0
+    mad_low_threshold: float = 0.04
+    mad_high_threshold: float = 0.12
+    window_duration_s: float = 1.0
 
     def validate(self) -> None:
         if self.short_window_sec <= 0 or self.step_sec <= 0:
             raise ValueError("Motion window and step must be positive")
-        if self.multiplier_mad_enter <= self.multiplier_mad_exit:
-            raise ValueError("multiplier_mad_enter must be greater than multiplier_mad_exit")
 
 
 @dataclass
@@ -117,6 +124,9 @@ class StateMachineConfig:
     bed_exit_confirmation_sec: float = 6.0
     empty_bed_variance_threshold: float = 0.04
     no_data_timeout_sec: float = 5.0
+    empty_bed_threshold: float = 0.015
+    no_person_timeout_s: float = 5.0
+    bed_exit_motion_decay_s: float = 3.0
 
     def validate(self) -> None:
         if self.debounce_time_sec < 0 or self.bed_exit_confirmation_sec < 0:
@@ -146,6 +156,36 @@ class LoggingConfig:
 
 
 @dataclass
+class ResampleFacade:
+    target_rate_hz: float = 20.0
+    max_gap_s: float = 0.5
+
+
+@dataclass
+class HampelFacade:
+    window_size: int = 7
+    n_sigmas: float = 3.0
+    min_deviation_floor: Optional[float] = None
+    relative_floor_ratio: float = 0.05
+
+
+@dataclass
+class BandpassFacade:
+    lowcut_hz: float = 0.1
+    highcut_hz: float = 0.5
+    order: int = 4
+
+
+@dataclass
+class BreathingFacade:
+    window_duration_s: float = 15.0
+    step_duration_s: float = 1.0
+    min_bpm: float = 6.0
+    max_bpm: float = 30.0
+    fft_zero_pad_factor: int = 8
+
+
+@dataclass
 class AppConfig:
     system: SystemConfig = field(default_factory=SystemConfig)
     subcarriers: SubcarrierConfig = field(default_factory=SubcarrierConfig)
@@ -155,6 +195,37 @@ class AppConfig:
     state_machine: StateMachineConfig = field(default_factory=StateMachineConfig)
     display_link: DisplayLinkConfig = field(default_factory=DisplayLinkConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+    @property
+    def resample(self) -> ResampleFacade:
+        return ResampleFacade(target_rate_hz=self.system.uniform_rate_hz, max_gap_s=0.5)
+
+    @property
+    def hampel(self) -> HampelFacade:
+        return HampelFacade(
+            window_size=self.filter.hampel_window_samples,
+            n_sigmas=self.filter.hampel_n_sigmas,
+            min_deviation_floor=self.filter.min_deviation_floor,
+            relative_floor_ratio=self.filter.relative_floor_ratio,
+        )
+
+    @property
+    def bandpass(self) -> BandpassFacade:
+        return BandpassFacade(
+            lowcut_hz=self.filter.bandpass_low_hz,
+            highcut_hz=self.filter.bandpass_high_hz,
+            order=self.filter.bandpass_order,
+        )
+
+    @property
+    def breathing(self) -> BreathingFacade:
+        return BreathingFacade(
+            window_duration_s=self.estimation.window_length_sec,
+            step_duration_s=self.estimation.window_stride_sec,
+            min_bpm=self.estimation.min_bpm,
+            max_bpm=self.estimation.max_bpm,
+            fft_zero_pad_factor=self.estimation.fft_zero_pad_factor,
+        )
 
     def validate(self) -> None:
         self.system.validate()
@@ -170,7 +241,6 @@ class AppConfig:
 def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     """Load and validate configuration from YAML file or defaults."""
     if config_path is None:
-        # Search default location
         project_root = Path(__file__).resolve().parent.parent.parent
         default_yaml = project_root / "config" / "default.yaml"
         if default_yaml.is_file():
@@ -182,7 +252,6 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
             with open(config_path, "r", encoding="utf-8") as f:
                 data: Dict[str, Any] = yaml.safe_load(f) or {}
         else:
-            # Fallback simple parser for environments where PyYAML is not yet installed
             data = {}
 
         if "system" in data:

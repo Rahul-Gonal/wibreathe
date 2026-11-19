@@ -11,22 +11,14 @@ from typing import List, Optional
 
 from wibreathe import __version__
 from wibreathe.config import load_config
-from wibreathe.dsp.bandpass import RespirationBandpass, detrend_median
-from wibreathe.dsp.breathing import RespirationEstimator
-from wibreathe.dsp.hampel import HampelFilter
-from wibreathe.dsp.motion import MotionDetector
-from wibreathe.dsp.quality import QualityMonitor
-from wibreathe.dsp.resample import UniformResampler
-from wibreathe.dsp.subcarriers import SubcarrierSelector
 from wibreathe.io.display_link import DisplayLink
 from wibreathe.io.parser import CSIParser
 from wibreathe.io.recorder import CSIRecorder, RecordingMetadata
 from wibreathe.io.replay import CSIReplay
 from wibreathe.io.serial_reader import SerialReader, list_serial_ports
+from wibreathe.pipeline import WiBreathePipeline
 from wibreathe.sim.synthetic import SyntheticGenerator, SyntheticScenario
 from wibreathe.state.calibration import BedCalibration, Calibrator
-from wibreathe.state.machine import SystemState, WiBreatheStateMachine
-from wibreathe.viz.live_plot import LiveDashboard
 from wibreathe.viz.offline_plots import generate_offline_plots
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -37,7 +29,11 @@ def cmd_list_ports(args: argparse.Namespace) -> int:
     """List available serial communication ports."""
     ports = list_serial_ports()
     if not ports:
-        print("No serial ports discovered. Verify board connection via USB-UART.")
+        print("No serial ports discovered.")
+        print("Troubleshooting:")
+        print("  1. Verify USB cable is a 4-wire data cable (not a charge-only cable).")
+        print("  2. Ensure USB-UART bridge drivers (CP210x or CH340) are installed.")
+        print("  3. On Linux, ensure your user belongs to the 'dialout' or 'uucp' group.")
         return 1
     print("Available serial ports:")
     for p in ports:
@@ -55,15 +51,20 @@ def cmd_check_link(args: argparse.Namespace) -> int:
         reader.start()
     except Exception as e:
         print(f"FAIL: Could not open port {args.port}: {e}")
+        print("\nTroubleshooting:")
+        print("  1. Verify USB cable is a 4-wire data cable (not a charge-only cable).")
+        print("  2. Ensure driver (CP210x or CH340) is installed and port is not open elsewhere.")
         return 1
 
-    print("Listening for 5 seconds...")
+    listen_sec = max(1.0, float(getattr(args, "duration", 5.0)))
+    print(f"Listening for {listen_sec:.1f} seconds...")
     start_time = time.time()
     frames_received = 0
     rssi_list: List[int] = []
     len_list: List[int] = []
+    seq_list: List[int] = []
 
-    while time.time() - start_time < 5.0:
+    while time.time() - start_time < listen_sec:
         line = reader.get_line(timeout=0.2)
         if line:
             frame = parser.parse_line(line)
@@ -71,13 +72,23 @@ def cmd_check_link(args: argparse.Namespace) -> int:
                 frames_received += 1
                 rssi_list.append(frame.rssi)
                 len_list.append(len(frame.raw_bytes))
+                seq_list.append(frame.packet_id)
 
     reader.stop()
 
     duration = time.time() - start_time
-    rate = frames_received / duration
+    rate = frames_received / max(0.001, duration)
+
+    # Compute loss from sequence numbers if possible
+    loss_pct = 0.0
+    if len(seq_list) > 1:
+        seq_diff = seq_list[-1] - seq_list[0] + 1
+        if seq_diff > len(seq_list):
+            loss_pct = ((seq_diff - len(seq_list)) / seq_diff) * 100.0
 
     print("\n--- Link Check Results ---")
+    print(f"Port           : {args.port}")
+    print(f"Duration       : {duration:.2f} s")
     print(f"Frames Received: {frames_received}")
     print(f"Average Rate   : {rate:.1f} packets/sec")
 
@@ -85,7 +96,8 @@ def cmd_check_link(args: argparse.Namespace) -> int:
         avg_rssi = sum(rssi_list) / len(rssi_list)
         common_len = max(set(len_list), key=len_list.count)
         print(f"Average RSSI   : {avg_rssi:.1f} dBm")
-        print(f"CSI Array Len  : {common_len} bytes ({common_len // 2} subcarriers)")
+        print(f"CSI Array Len  : {common_len} values ({common_len // 2} subcarriers)")
+        print(f"Est. Packet Loss: {loss_pct:.1f}%")
 
         if rate >= 10.0:
             print("\nRESULT: [PASS] - Reliable CSI stream active.")
@@ -95,11 +107,12 @@ def cmd_check_link(args: argparse.Namespace) -> int:
             return 0
 
     print("\nRESULT: [FAIL] - No CSI frames received.")
-    print("Troubleshooting steps:")
-    print("  1. Verify cable is plugged into UART port (not native USB-JTAG).")
-    print("  2. Check both TX and RX share the same Wi-Fi channel (default 6).")
-    print("  3. Ensure transmitter sends packets at an OFDM rate (MCS0), not 802.11b.")
-    print("  4. If TX MAC filter is set, verify it matches transmitter MAC address.")
+    print("Troubleshooting:")
+    print("  1. Verify USB cable is a 4-wire data cable (charge-only cables cannot transfer data).")
+    print("  2. Check that the transmitter node is powered and active.")
+    print("  3. Check both TX and RX share the same Wi-Fi channel (default 6).")
+    print("  4. Ensure transmitter sends packets at an OFDM rate (MCS0), not 802.11b.")
+    print("  5. If TX MAC filter is set, verify it matches transmitter MAC address.")
     return 1
 
 
@@ -137,8 +150,14 @@ def cmd_record(args: argparse.Namespace) -> int:
     print(f"Starting raw recording for participant {args.volunteer} [{args.mode}]. Press Ctrl+C to stop.")
     reader.start()
 
+    start_t = time.time()
+    max_duration = float(args.duration) if args.duration else None
+
     try:
         while True:
+            if max_duration and (time.time() - start_t) >= max_duration:
+                print(f"\nReached target duration of {max_duration}s.")
+                break
             line = reader.get_line(timeout=0.5)
             if line:
                 frame = parser.parse_line(line)
@@ -182,18 +201,129 @@ def cmd_plot(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    """Replay recorded CSI CSV file through the system."""
+    """Replay recorded CSI CSV file through the shared DSP pipeline and state machine."""
+    cfg = load_config(args.config)
+    pipeline = WiBreathePipeline(config=cfg)
     replay = CSIReplay(args.file, realtime=not args.fast, speedup=args.speed)
     count = 0
     print(f"Starting replay of {args.file} (realtime={not args.fast}, speedup={args.speed}x)...")
+
     try:
         for frame in replay.stream():
+            res = pipeline.process_frame(frame)
             count += 1
             if count % 250 == 0:
-                print(f"Replayed {count} frames (seq={frame.packet_id}, rssi={frame.rssi} dBm)...")
+                bpm_str = f"{res.bpm:.1f}" if res.bpm is not None else "--"
+                print(
+                    f"Replayed {count:5d} frames | t={res.timestamp_s:6.1f}s | "
+                    f"State: {res.state.value:10s} | BPM: {bpm_str:4s} | Mot: {res.motion_metric:.3f}"
+                )
     except KeyboardInterrupt:
         print("\nReplay paused by user.")
-    print(f"Replay complete: {count} frames processed.")
+
+    print(f"Replay complete: {count} frames processed through pipeline.")
+    return 0
+
+
+def cmd_live(args: argparse.Namespace) -> int:
+    """Run real-time streaming pipeline from serial reader to state machine and optional display link."""
+    cfg = load_config(args.config)
+    calib = BedCalibration.load(args.calibration) if args.calibration else BedCalibration()
+    pipeline = WiBreathePipeline(config=cfg, calibration=calib)
+
+    reader = SerialReader(port=args.port, baud_rate=args.baud)
+    parser = CSIParser(filter_mac=args.mac)
+
+    disp_link = None
+    if getattr(args, "display", False):
+        disp_link = DisplayLink(reader=reader, publish_rate_hz=1.0)
+        disp_link.start()
+
+    print(f"Starting WiBreathe live processing on {args.port} @ {args.baud} baud...")
+    print("Press Ctrl+C to stop.")
+    reader.start()
+
+    last_print_t = time.time()
+    try:
+        while True:
+            line = reader.get_line(timeout=0.2)
+            if line:
+                frame = parser.parse_line(line)
+                if frame:
+                    res = pipeline.process_frame(frame)
+                    if disp_link:
+                        disp_link.update_values(res.state, res.bpm, res.confidence)
+
+                    now = time.time()
+                    if now - last_print_t >= 1.0:
+                        bpm_str = f"{res.bpm:.1f}" if res.bpm is not None else "--"
+                        print(
+                            f"[LIVE] t={res.timestamp_s:6.1f}s | State: {res.state.value:11s} | "
+                            f"BPM: {bpm_str:4s} | Qual: {res.confidence:3.0f}% | "
+                            f"Mot: {res.motion_metric:.3f} | Pkts: {res.packet_rate_hz:4.1f}Hz"
+                        )
+                        last_print_t = now
+    except KeyboardInterrupt:
+        print("\nHalting live pipeline...")
+    finally:
+        if disp_link:
+            disp_link.stop()
+        reader.stop()
+
+    return 0
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """Calibrate empty bed or occupied stillness baseline profile."""
+    mode = args.mode.lower()
+    out_path = Path(args.out) if args.out else Path(f"config/calibration_{mode}.json")
+    calibrator = Calibrator()
+
+    if getattr(args, "file", None):
+        print(f"Calibrating from file {args.file} (mode={mode})...")
+        replay = CSIReplay(args.file, realtime=False)
+        variances = []
+        for frame in replay.stream():
+            amps = frame.amplitudes
+            mean_a = sum(amps) / len(amps)
+            v = sum((a - mean_a) ** 2 for a in amps) / len(amps)
+            variances.append(v)
+    else:
+        if not getattr(args, "port", None):
+            print("Error: Either --port or --file must be specified for calibration.")
+            return 1
+        print(f"Recording {args.duration}s calibration baseline from {args.port} (mode={mode})...")
+        reader = SerialReader(port=args.port, baud_rate=args.baud)
+        parser = CSIParser()
+        reader.start()
+        start_t = time.time()
+        variances = []
+        try:
+            while time.time() - start_t < float(args.duration):
+                line = reader.get_line(timeout=0.2)
+                if line:
+                    frame = parser.parse_line(line)
+                    if frame:
+                        amps = frame.amplitudes
+                        mean_a = sum(amps) / len(amps)
+                        v = sum((a - mean_a) ** 2 for a in amps) / len(amps)
+                        variances.append(v)
+        finally:
+            reader.stop()
+
+    if not variances:
+        print("Error: No CSI frames acquired during calibration session.")
+        return 1
+
+    if mode == "empty":
+        calibrator.process_empty_bed_data(variances)
+    else:
+        calibrator.process_occupied_still_data(variances)
+
+    calibrator.calibration.save(out_path)
+    print(f"Calibration successful! Profile saved to: {out_path}")
+    print(f"  Empty bed variance: {calibrator.calibration.empty_bed_variance:.4f}")
+    print(f"  Occupied variance : {calibrator.calibration.occupied_still_variance:.4f}")
     return 0
 
 
@@ -231,7 +361,6 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(f"Error: Reference data file not found: {ref_path}")
         return 1
 
-    # Read estimated windows from CSV
     est_windows = []
     with open(est_path, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -275,8 +404,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # check-link
     p_check = subparsers.add_parser("check-link", help="Verify receiver CSI data link")
-    p_check.add_argument("-p", "--port", required=True, help="Serial device port (e.g. /dev/cu.usbserial-10 or COM3)")
+    p_check.add_argument("-p", "--port", required=True, help="Serial device port")
     p_check.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate (default: 921600)")
+    p_check.add_argument("-d", "--duration", type=float, default=5.0, help="Listening duration in seconds")
     p_check.add_argument("--mac", help="Filter by transmitter MAC address")
 
     # record
@@ -289,6 +419,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rec.add_argument("--mode", default="normal", help="Breathing mode (normal, slow, fast, hold, empty, movement, bed_exit)")
     p_rec.add_argument("--posture", default="supine", help="Body posture")
     p_rec.add_argument("--position", default="center", help="Bed position")
+    p_rec.add_argument("--duration", type=float, help="Optional duration limit in seconds")
     p_rec.add_argument("--consent", action="store_true", required=True, help="Affirm informed participant consent")
     p_rec.add_argument("-c", "--config", help="Configuration file path")
     p_rec.add_argument("--notes", default="", help="Observational notes")
@@ -309,10 +440,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_plot.add_argument("-o", "--out", help="Output PNG path")
 
     # replay
-    p_rep = subparsers.add_parser("replay", help="Replay recorded CSI CSV stream")
+    p_rep = subparsers.add_parser("replay", help="Replay recorded CSI CSV stream through pipeline")
     p_rep.add_argument("-f", "--file", required=True, help="Path to recorded CSV file")
     p_rep.add_argument("-s", "--speed", type=float, default=1.0, help="Replay speed multiplier")
-    p_rep.add_argument("--fast", action="store_true", help="Replay as fast as possible without real-time delays")
+    p_rep.add_argument("--fast", action="store_true", help="Replay as fast as possible without delays")
+    p_rep.add_argument("-c", "--config", help="Configuration file path")
+
+    # live
+    p_live = subparsers.add_parser("live", help="Live streaming pipeline and monitoring")
+    p_live.add_argument("-p", "--port", required=True, help="Serial device port")
+    p_live.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate")
+    p_live.add_argument("--mac", help="Filter by transmitter MAC address")
+    p_live.add_argument("--calibration", help="Path to calibration profile JSON/YAML")
+    p_live.add_argument("--display", action="store_true", help="Enable downstream OLED display link")
+    p_live.add_argument("--headless", action="store_true", help="Run without graphical UI")
+    p_live.add_argument("-c", "--config", help="Configuration file path")
+
+    # calibrate
+    p_cal = subparsers.add_parser("calibrate", help="Calibrate empty bed or occupied stillness baseline")
+    p_cal.add_argument("--mode", choices=["empty", "occupied"], required=True, help="Calibration target mode")
+    p_cal.add_argument("-p", "--port", help="Serial port to record baseline from")
+    p_cal.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate")
+    p_cal.add_argument("-d", "--duration", type=float, default=30.0, help="Duration in seconds")
+    p_cal.add_argument("-f", "--file", help="Calibrate from existing CSV file instead of live port")
+    p_cal.add_argument("-o", "--out", help="Output calibration JSON path")
 
     # tap
     p_tap = subparsers.add_parser("tap", help="Reference tap logger for ground-truth breath recording")
@@ -320,11 +471,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_tap.add_argument("--mode", default="normal", help="Breathing mode")
     p_tap.add_argument("-o", "--out", help="Custom output reference CSV path")
 
-    # eval
-    p_ev = subparsers.add_parser("eval", help="Compute quantitative benchmark evaluation metrics")
-    p_ev.add_argument("--est", required=True, help="Estimated window states/rates CSV")
-    p_ev.add_argument("--ref", required=True, help="Reference ground truth CSV")
-    p_ev.add_argument("-o", "--out", default="data/results", help="Output directory for reports")
+    # eval & evaluate
+    for ev_cmd in ("eval", "evaluate"):
+        p_ev = subparsers.add_parser(ev_cmd, help="Compute quantitative benchmark evaluation metrics")
+        p_ev.add_argument("--est", required=True, help="Estimated window states/rates CSV")
+        p_ev.add_argument("--ref", required=True, help="Reference ground truth CSV")
+        p_ev.add_argument("-o", "--out", default="data/results", help="Output directory for reports")
 
     args = parser.parse_args(argv)
 
@@ -340,9 +492,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_plot(args)
     elif args.command == "replay":
         return cmd_replay(args)
+    elif args.command == "live":
+        return cmd_live(args)
+    elif args.command == "calibrate":
+        return cmd_calibrate(args)
     elif args.command == "tap":
         return cmd_tap(args)
-    elif args.command == "eval":
+    elif args.command in ("eval", "evaluate"):
         return cmd_eval(args)
 
     return 0

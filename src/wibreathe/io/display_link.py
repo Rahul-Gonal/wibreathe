@@ -1,16 +1,52 @@
-"""Downstream serial transmitter sending live DISP packets to the ESP32 OLED receiver."""
+"""Downstream serial transmitter sending live DISP packets to the ESP32 OLED receiver.
+
+Protocol defined in docs/PROTOCOL.md:
+  DISP,<state>,<bpm or -->,<confidence 0-100>,<seq>\n
+"""
 
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from wibreathe.io.serial_reader import SerialReader
 from wibreathe.state.machine import SystemState
 
 logger = logging.getLogger(__name__)
+
+
+def format_disp_message(
+    state: SystemState | str,
+    bpm: Optional[float],
+    confidence: float,
+    seq: int,
+) -> str:
+    """Format canonical downstream OLED display line: DISP,<state>,<bpm or -->,<conf>,<seq>"""
+    state_str = state.value if isinstance(state, SystemState) else str(state)
+    bpm_str = f"{bpm:.1f}" if (bpm is not None and bpm > 0) else "--"
+    conf_int = max(0, min(100, int(round(confidence))))
+    return f"DISP,{state_str},{bpm_str},{conf_int},{seq}"
+
+
+def parse_disp_message(line: str) -> Optional[Tuple[str, Optional[float], int, int]]:
+    """Parse canonical downstream OLED display line.
+    
+    Returns (state, bpm, confidence, sequence) or None if invalid.
+    """
+    clean = line.strip()
+    if not clean.startswith("DISP,"):
+        return None
+    parts = clean.split(",")
+    if len(parts) != 5:
+        return None
+    
+    state_str = parts[1]
+    bpm_val = None if parts[2] == "--" else float(parts[2])
+    conf_val = int(parts[3])
+    seq_val = int(parts[4])
+    return state_str, bpm_val, conf_val, seq_val
 
 
 class DisplayLink:
@@ -46,15 +82,16 @@ class DisplayLink:
             self.latest_confidence = max(0.0, min(100.0, confidence))
 
     def format_line(self) -> str:
-        """Format protocol ASCII line: DISP,<state>,<bpm>,<confidence>,<seq>"""
+        """Format canonical protocol ASCII line."""
         with self._lock:
-            state_str = self.latest_state.value
-            bpm_str = f"{self.latest_bpm:.1f}" if self.latest_bpm is not None else "--"
-            conf_int = int(round(self.latest_confidence))
-            seq_val = self.seq
+            line = format_disp_message(
+                self.latest_state,
+                self.latest_bpm,
+                self.latest_confidence,
+                self.seq,
+            )
             self.seq += 1
-
-        return f"DISP,{state_str},{bpm_str},{conf_int},{seq_val}"
+            return line
 
     def send_now(self) -> bool:
         """Immediately format and transmit a single DISP line."""
@@ -72,16 +109,21 @@ class DisplayLink:
             daemon=True,
         )
         self._thread.start()
-        logger.info("DisplayLink background worker active at %.1f Hz", 1.0 / self.publish_interval_s)
+        logger.info("DisplayLink background worker started at %.1f Hz", 1.0 / self.publish_interval_s)
 
-    def stop(self, timeout: float = 1.5) -> None:
-        """Stop background worker."""
+    def stop(self, timeout: float = 2.0) -> None:
+        """Halt background transmitter thread."""
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
         logger.info("DisplayLink stopped")
 
     def _publish_loop(self) -> None:
+        """Periodic publisher loop."""
         while self._running:
+            start_t = time.monotonic()
             self.send_now()
-            time.sleep(self.publish_interval_s)
+            elapsed = time.monotonic() - start_t
+            remain = self.publish_interval_s - elapsed
+            if remain > 0:
+                time.sleep(remain)

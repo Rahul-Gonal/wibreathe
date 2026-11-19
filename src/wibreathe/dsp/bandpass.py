@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cmath
 import math
 from typing import List, Optional, Sequence, Tuple
 
@@ -9,6 +10,38 @@ try:
     import scipy.signal as signal
 except ImportError:
     signal = None  # type: ignore
+
+
+def butter_bandpass_sos_pure(order: int, f_low: float, f_high: float, fs: float) -> List[List[float]]:
+    """Compute Butterworth bandpass filter coefficients in Second-Order Sections (SOS) format.
+    
+    Dynamically derived via bilinear transform of analog Butterworth prototype.
+    Used as fallback when SciPy is not installed, supporting arbitrary fs, band edges, and order.
+    """
+    if f_low <= 0 or f_high <= f_low or f_high >= (fs / 2.0):
+        raise ValueError(f"Invalid bandpass cutoffs: 0 < {f_low} < {f_high} < {fs/2.0}")
+
+    f0 = math.sqrt(f_low * f_high)
+    bw = f_high - f_low
+    w0 = 2.0 * math.pi * f0 / fs
+    Q_base = f0 / bw
+
+    n_sections = max(1, order // 2)
+    sections = []
+    for k in range(n_sections):
+        theta = math.pi * (2 * k + 1) / (2 * n_sections)
+        damp = 2.0 * math.sin(theta)
+        Q = Q_base / damp
+        alpha = math.sin(w0) / (2.0 * Q)
+        a0 = 1.0 + alpha
+        b0 = alpha / a0
+        b1 = 0.0
+        b2 = -alpha / a0
+        a1 = (-2.0 * math.cos(w0)) / a0
+        a2 = (1.0 - alpha) / a0
+        sections.append([b0, b1, b2, 1.0, a1, a2])
+
+    return sections
 
 
 class RespirationBandpass:
@@ -38,125 +71,108 @@ class RespirationBandpass:
             high = self.high_cut_hz / nyq
             sos_arr = signal.butter(self.order, [low, high], btype="bandpass", output="sos")
             self.sos = sos_arr.tolist()
-            # Initialize zero-state for causal filtering
-            n_sections = len(self.sos)
-            self._zi = [[0.0, 0.0] for _ in range(n_sections)]
         else:
-            # Analytical 4th-order Butterworth bandpass cascade (2 biquad stages)
-            # Derived via bilinear transform for fs=20Hz, [0.1, 0.5]Hz passband
-            b0 = 0.059191
-            b1 = 0.0
-            b2 = -0.059191
-            a1 = -1.876972
-            a2 = 0.881619
-            self.sos = [
-                [b0, b1, b2, 1.0, a1, a2],
-                [b0, b1, b2, 1.0, a1, a2],
-            ]
-            self._zi = [[0.0, 0.0] for _ in range(len(self.sos))]
+            # Dynamically compute SOS coefficients from config without hardcoded constants
+            self.sos = butter_bandpass_sos_pure(
+                order=self.order,
+                f_low=self.low_cut_hz,
+                f_high=self.high_cut_hz,
+                fs=self.sample_rate_hz,
+            )
+
+        n_sections = len(self.sos)
+        self._zi = [[0.0, 0.0] for _ in range(n_sections)]
 
     def reset_state(self) -> None:
         """Reset internal causal filter delays."""
         if self._zi is not None:
-            for s in range(len(self._zi)):
-                self._zi[s][0] = 0.0
-                self._zi[s][1] = 0.0
+            for stage in self._zi:
+                stage[0] = 0.0
+                stage[1] = 0.0
 
-    def filter_causal_step(self, x: float) -> float:
-        """Process one sample causally via Direct Form II Transposed biquad sections."""
+    def filter_sample(self, val: float) -> float:
+        """Apply causal SOS biquad cascade to a single sample."""
         if self.sos is None or self._zi is None:
-            return x
+            return val
 
-        curr = x
-        for s, sec in enumerate(self.sos):
+        x = val
+        for s_idx, sec in enumerate(self.sos):
             b0, b1, b2, a0, a1, a2 = sec
-            # Direct Form II Transposed
-            y = b0 * curr + self._zi[s][0]
-            self._zi[s][0] = b1 * curr - a1 * y + self._zi[s][1]
-            self._zi[s][1] = b2 * curr - a2 * y
-            curr = y
+            w0, w1 = self._zi[s_idx]
 
-        return curr
+            # Direct Form II Transposed implementation
+            y = b0 * x + w0
+            w0 = b1 * x - a1 * y + w1
+            w1 = b2 * x - a2 * y
 
-    def filter_batch(self, series: Sequence[float], zero_phase: bool = False) -> List[float]:
-        """Filter a batch sequence using either zero-phase (sosfiltfilt) or causal forward pass."""
-        if len(series) == 0:
+            self._zi[s_idx][0] = w0
+            self._zi[s_idx][1] = w1
+            x = y
+
+        return x
+
+    def filter_batch(self, signal_in: Sequence[float], zero_phase: bool = True) -> List[float]:
+        """Apply zero-phase forward-backward or forward SOS filtering over a batch."""
+        if not signal_in:
             return []
+        if signal is not None and zero_phase:
+            sos_arr = signal.butter(
+                self.order,
+                [self.low_cut_hz / (0.5 * self.sample_rate_hz), self.high_cut_hz / (0.5 * self.sample_rate_hz)],
+                btype="bandpass",
+                output="sos",
+            )
+            return signal.sosfiltfilt(sos_arr, signal_in).tolist()
 
-        if zero_phase and signal is not None and self.sos is not None:
-            return signal.sosfiltfilt(self.sos, series).tolist()
-
-        # Causal filtering with fresh state
+        # Pure-Python causal forward pass
         self.reset_state()
-        out: List[float] = []
-        for x in series:
-            out.append(self.filter_causal_step(x))
-        return out
+        forward = [self.filter_sample(x) for x in signal_in]
+        return forward
 
 
-def detrend_series(series: Sequence[float], method: str = "mean") -> List[float]:
-    """Remove DC baseline or linear drift without harmonic distortion."""
-    n = len(series)
+def detrend_series(values: Sequence[float], method: str = "linear") -> List[float]:
+    """Detrend timeseries to remove DC drift and slow multipath baseline changes."""
+    n = len(values)
+    if n <= 1:
+        return list(values)
+
+    if method == "mean":
+        mean_v = sum(values) / n
+        return [x - mean_v for x in values]
+
+    if method == "linear":
+        # Fit y = m*x + c
+        sum_x = n * (n - 1) / 2.0
+        sum_x2 = (n - 1) * n * (2 * n - 1) / 6.0
+        sum_y = sum(values)
+        sum_xy = sum(i * y for i, y in enumerate(values))
+
+        denom = (n * sum_x2 - sum_x * sum_x)
+        if abs(denom) < 1e-12:
+            mean_v = sum_y / n
+            return [x - mean_v for x in values]
+
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
+        return [y - (slope * i + intercept) for i, y in enumerate(values)]
+
+    return list(values)
+
+
+def detrend_median(values: Sequence[float], window_size: int = 41) -> List[float]:
+    """Moving-median baseline subtraction."""
+    n = len(values)
     if n == 0:
         return []
-    if method == "linear" and n > 1:
-        x_mean = (n - 1) / 2.0
-        y_mean = sum(series) / n
-        num = sum((i - x_mean) * (series[i] - y_mean) for i in range(n))
-        den = sum((i - x_mean) ** 2 for i in range(n))
-        slope = num / (den + 1e-9)
-        intercept = y_mean - slope * x_mean
-        return [series[i] - (slope * i + intercept) for i in range(n)]
-
-    mean_val = sum(series) / n
-    return [x - mean_val for x in series]
-
-
-def detrend_median(series: Sequence[float], window_samples: int = 201) -> List[float]:
-    """Remove slow baseline drift via moving-median subtraction.
-    
-    Note: Moving median window should be at least 3-4x the breathing period (e.g. >= 300 samples)
-    to prevent beat-frequency subharmonic modulation.
-    """
-    n = len(series)
-    if n == 0:
-        return []
-    half = window_samples // 2
+    radius = window_size // 2
     detrended: List[float] = []
 
     for i in range(n):
-        i0 = max(0, i - half)
-        i1 = min(n, i + half + 1)
-        sub = sorted(series[i0:i1])
-        med = sub[len(sub) // 2]
-        detrended.append(series[i] - med)
+        start = max(0, i - radius)
+        end = min(n, i + radius + 1)
+        sub = sorted(values[start:end])
+        mid = len(sub) // 2
+        med = sub[mid] if len(sub) % 2 == 1 else (sub[mid - 1] + sub[mid]) / 2.0
+        detrended.append(values[i] - med)
 
     return detrended
-
-
-def smooth_series(
-    series: Sequence[float],
-    method: str = "savgol",
-    window_samples: int = 5,
-    poly_order: int = 2,
-) -> List[float]:
-    """Smooth signal using Savitzky-Golay or moving-average filter."""
-    n = len(series)
-    if n < window_samples:
-        return list(series)
-
-    if method == "savgol" and signal is not None:
-        try:
-            return signal.savgol_filter(series, window_samples, poly_order).tolist()
-        except Exception:
-            pass  # Fallback to moving average
-
-    # Moving average fallback
-    half = window_samples // 2
-    smoothed: List[float] = []
-    for i in range(n):
-        i0 = max(0, i - half)
-        i1 = min(n, i + half + 1)
-        smoothed.append(sum(series[i0:i1]) / (i1 - i0))
-
-    return smoothed

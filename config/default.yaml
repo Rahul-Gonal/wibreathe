@@ -1,4 +1,5 @@
 # WiBreathe Configuration File
+# Target: Classic ESP32 DevKit V1 (ESP-32D, 4MB Flash)
 # All time durations are in seconds, frequencies in Hertz.
 
 system:
@@ -11,15 +12,20 @@ system:
   max_queue_size: 2000
 
 subcarriers:
-  raw_subcarrier_count: 64      # 64 subcarriers for 20MHz bandwidth
-  null_indices: [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]  # Guard & DC bins
+  raw_subcarrier_count: 64      # 64 subcarriers for HT20 bandwidth
+  layout: "lltf_ht20"           # lltf_ht20 or htltf_ht20
+  # UNVERIFIED on hardware: nominal null & DC guard bins
+  null_indices: [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]
   selection_method: "variance"  # Options: 'variance', 'snr', 'pca', 'mean'
   num_selected: 8               # Top subcarriers to retain for processing
+  top_k: 8
 
 filter:
   hampel_window_samples: 7
   hampel_n_sigmas: 3.0
-  detrend_method: "median"      # Options: 'median', 'highpass'
+  min_deviation_floor: null     # Relative floor used when null
+  relative_floor_ratio: 0.05    # 5% of signal robust scale/median
+  detrend_method: "linear"      # Options: 'linear', 'mean', 'median'
   detrend_window_sec: 10.0
   bandpass_low_hz: 0.1          # 6 bpm lower bound
   bandpass_high_hz: 0.5         # 30 bpm upper bound
@@ -36,6 +42,8 @@ estimation:
   min_peak_prominence: 0.05
   min_peak_distance_sec: 2.0    # Limits maximum detectable rate to 30 bpm
   min_confidence_score: 35.0
+  min_bpm: 6.0
+  max_bpm: 30.0
 
 motion:
   short_window_sec: 1.5
@@ -43,12 +51,18 @@ motion:
   multiplier_mad_enter: 3.5
   multiplier_mad_exit: 2.0
   min_duration_sec: 1.0
+  mad_low_threshold: 0.04
+  mad_high_threshold: 0.12
+  window_duration_s: 1.0
 
 state_machine:
   debounce_time_sec: 2.0
   bed_exit_confirmation_sec: 6.0
   empty_bed_variance_threshold: 0.04
   no_data_timeout_sec: 5.0
+  empty_bed_threshold: 0.015
+  no_person_timeout_s: 5.0
+  bed_exit_motion_decay_s: 3.0
 
 display_link:
   enabled: true

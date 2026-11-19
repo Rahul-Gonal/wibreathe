@@ -70,14 +70,39 @@ class RespirationEstimator:
         min_peak_prominence: float = 0.05,
         min_peak_distance_sec: float = 2.0,
         min_confidence_score: float = 35.0,
+        window_duration_s: float = 30.0,
+        step_duration_s: float = 1.0,
+        min_bpm: float = 6.0,
+        max_bpm: float = 30.0,
+        fft_zero_pad_factor: Optional[int] = None,
     ):
         self.sample_rate_hz = sample_rate_hz
-        self.bandpass_low_hz = bandpass_low_hz
-        self.bandpass_high_hz = bandpass_high_hz
-        self.fft_pad_factor = fft_pad_factor
+        self.bandpass_low_hz = bandpass_low_hz if bandpass_low_hz > 0 else (min_bpm / 60.0)
+        self.bandpass_high_hz = bandpass_high_hz if bandpass_high_hz > 0 else (max_bpm / 60.0)
+        self.fft_pad_factor = fft_zero_pad_factor if fft_zero_pad_factor is not None else fft_pad_factor
         self.min_peak_prominence = min_peak_prominence
         self.min_peak_distance_samples = int(round(min_peak_distance_sec * sample_rate_hz))
         self.min_confidence_score = min_confidence_score
+        self.window_duration_s = window_duration_s
+        self.step_duration_s = step_duration_s
+
+        # Rolling buffer for streaming add_sample
+        self._samples: List[float] = []
+        self._last_eval_t: float = 0.0
+
+    def add_sample(self, t: float, val: float) -> Optional[Tuple[float, float]]:
+        """Add sample to rolling window and return (bpm, confidence) if step interval elapsed."""
+        self._samples.append(val)
+        max_len = int(self.window_duration_s * self.sample_rate_hz)
+        if len(self._samples) > max_len:
+            self._samples.pop(0)
+
+        step_samples = int(self.step_duration_s * self.sample_rate_hz)
+        if len(self._samples) >= max_len and (t - self._last_eval_t) >= self.step_duration_s:
+            est = self.estimate_rate(self._samples)
+            self._last_eval_t = t
+            return est.bpm, est.confidence
+        return None
 
     def estimate_rate(
         self,

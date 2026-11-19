@@ -20,21 +20,33 @@ except ImportError:
 
 
 def list_serial_ports() -> List[str]:
-    """Discover available serial communication ports cross-platform."""
+    """Discover available serial communication ports cross-platform.
+    
+    Prefers macOS /dev/cu.* ports over /dev/tty.* to avoid blocking on modem control lines.
+    Shows COMx on Windows and /dev/ttyUSB* / /dev/ttyACM* on Linux.
+    """
+    found: List[str] = []
     if serial is not None:
         try:
-            ports = [p.device for p in serial.tools.list_ports.comports()]
-            if ports:
-                return sorted(ports)
+            for p in serial.tools.list_ports.comports():
+                dev = p.device
+                # On macOS, prefer 'cu.*' devices over 'tty.*'
+                if sys.platform.startswith("darwin") and dev.startswith("/dev/tty."):
+                    cu_dev = dev.replace("/dev/tty.", "/dev/cu.")
+                    found.append(cu_dev)
+                else:
+                    found.append(dev)
+            if found:
+                return sorted(list(set(found)))
         except Exception as e:
             logger.debug("serial.tools.list_ports error: %s", e)
 
     # Fallback heuristic port matching
-    found: List[str] = []
     if sys.platform.startswith("darwin"):
         found.extend(glob.glob("/dev/cu.usbserial*"))
         found.extend(glob.glob("/dev/cu.SLAB_USBtoUART*"))
         found.extend(glob.glob("/dev/cu.wchusbserial*"))
+        found.extend(glob.glob("/dev/cu.usbmodem*"))
     elif sys.platform.startswith("linux"):
         found.extend(glob.glob("/dev/ttyUSB*"))
         found.extend(glob.glob("/dev/ttyACM*"))
@@ -64,6 +76,7 @@ class SerialReader:
         self._thread: Optional[threading.Thread] = None
         self._serial_handle: Optional[serial.Serial] = None
         self._serial_lock = threading.Lock()
+        self._synced: bool = False  # True once valid CSI_DATA line is reached after connect
 
         # Operational statistics
         self.lines_read_count: int = 0
@@ -131,21 +144,26 @@ class SerialReader:
         buffer = bytearray()
 
         while self._running:
-            # Connection management
+            # Connection management: open port without pulsing DTR/RTS lines
             if not self._serial_handle or not self._serial_handle.is_open:
                 try:
-                    logger.info("Attempting connection to %s...", self.port)
-                    new_handle = serial.Serial(
-                        port=self.port,
-                        baudrate=self.baud_rate,
-                        bytesize=serial.EIGHTBITS,
-                        parity=serial.PARITY_NONE,
-                        stopbits=serial.STOPBITS_ONE,
-                        timeout=self.timeout_sec,
-                    )
+                    logger.info("Attempting connection to %s without pulsing DTR/RTS...", self.port)
+                    new_handle = serial.Serial()
+                    new_handle.port = self.port
+                    new_handle.baudrate = self.baud_rate
+                    new_handle.bytesize = serial.EIGHTBITS
+                    new_handle.parity = serial.PARITY_NONE
+                    new_handle.stopbits = serial.STOPBITS_ONE
+                    new_handle.timeout = self.timeout_sec
+                    # Explicitly suppress DTR/RTS to avoid resetting ESP32 on connect
+                    new_handle.dtr = False
+                    new_handle.rts = False
+                    new_handle.open()
+
                     with self._serial_lock:
                         self._serial_handle = new_handle
                         self.is_connected = True
+                        self._synced = False  # Reset sync until first valid CSI line
                     self.reconnect_count += 1
                     logger.info("Successfully connected to %s", self.port)
                 except Exception as e:
@@ -170,6 +188,18 @@ class SerialReader:
                     if not line_str:
                         continue
 
+                    # Discard bootloader ROM text until first valid CSI_DATA line appears
+                    if not self._synced:
+                        if line_str.startswith("CSI_DATA,"):
+                            self._synced = True
+                            logger.info("Detected initial CSI_DATA stream sync.")
+                        elif line_str.startswith("type,id,mac") or line_str.startswith("STATUS,"):
+                            # Header or status is acceptable sync marker as well
+                            self._synced = True
+                        else:
+                            # Discard boot ROM text / chip reset logs
+                            continue
+
                     self.lines_read_count += 1
                     if line_str.startswith("CSI_DATA,"):
                         self.csi_lines_count += 1
@@ -180,9 +210,11 @@ class SerialReader:
                         self.line_queue.put_nowait(line_str)
                     except queue.Full:
                         self.dropped_queue_count += 1
+                        if self.dropped_queue_count % 100 == 1:
+                            logger.warning("SerialReader queue overflow! Dropped %d lines so far.", self.dropped_queue_count)
 
-            except Exception as err:
-                logger.warning("Serial read error on %s: %s. Reconnecting...", self.port, err)
+            except Exception as e:
+                logger.warning("Serial read error on %s: %s. Reconnecting...", self.port, e)
                 with self._serial_lock:
                     if self._serial_handle:
                         try:
@@ -191,4 +223,5 @@ class SerialReader:
                             pass
                         self._serial_handle = None
                     self.is_connected = False
+                    self._synced = False
                 time.sleep(self.reconnect_delay_sec)

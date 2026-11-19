@@ -1,5 +1,9 @@
 /*
- * Self-contained SSD1306 128x64 I2C OLED Driver for ESP-IDF
+ * Self-contained SSD1306 / SH1106 128x64 I2C OLED Driver for ESP-IDF v5.x
+ *
+ * UNVERIFIED on physical hardware: verified against SSD1306 and SH1106 datasheet specs.
+ * Supports SSD1306 (standard 0-column offset) and SH1106 (2-column offset).
+ * If the display is disconnected or absent, all operations return immediately without blocking.
  */
 
 #include "ssd1306.h"
@@ -7,6 +11,14 @@
 #include "esp_log.h"
 
 #define TAG "ssd1306"
+
+#if defined(CONFIG_WIBREATHE_OLED_SH1106)
+#define OLED_COL_OFFSET 2
+#define OLED_IS_SH1106 1
+#else
+#define OLED_COL_OFFSET 0
+#define OLED_IS_SH1106 0
+#endif
 
 static i2c_port_t s_i2c_port = I2C_NUM_0;
 static uint8_t s_i2c_addr = 0x3C;
@@ -87,6 +99,9 @@ static esp_err_t write_cmd(uint8_t cmd)
     i2c_master_stop(link);
     esp_err_t ret = i2c_master_cmd_begin(s_i2c_port, link, pdMS_TO_TICKS(10));
     i2c_cmd_link_delete(link);
+    if (ret != ESP_OK) {
+        s_is_present = false; /* Mark disconnected on bus failure */
+    }
     return ret;
 }
 
@@ -104,9 +119,15 @@ esp_err_t ssd1306_init(i2c_port_t port, int sda_pin, int scl_pin, uint8_t i2c_ad
         .master.clk_speed = 400000,
     };
     esp_err_t ret = i2c_param_config(s_i2c_port, &conf);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        s_is_present = false;
+        return ret;
+    }
     ret = i2c_driver_install(s_i2c_port, conf.mode, 0, 0, 0);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        s_is_present = false;
+        return ret;
+    }
 
     /* Ping device address */
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -117,14 +138,15 @@ esp_err_t ssd1306_init(i2c_port_t port, int sda_pin, int scl_pin, uint8_t i2c_ad
     i2c_cmd_link_delete(cmd);
 
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "SSD1306 not detected at I2C address 0x%02X (SDA=%d, SCL=%d). Continuing without display.",
+        ESP_LOGW(TAG, "OLED not detected at I2C address 0x%02X (SDA=%d, SCL=%d). Continuing without display.",
                  s_i2c_addr, sda_pin, scl_pin);
         s_is_present = false;
         return ESP_ERR_NOT_FOUND;
     }
 
     s_is_present = true;
-    ESP_LOGI(TAG, "SSD1306 detected successfully. Initializing 128x64 display.");
+    ESP_LOGI(TAG, "OLED detected successfully at 0x%02X. Controller: %s (col offset=%d)",
+             s_i2c_addr, OLED_IS_SH1106 ? "SH1106" : "SSD1306", OLED_COL_OFFSET);
 
     /* Initialization command sequence */
     write_cmd(0xAE); /* Display off */
@@ -133,7 +155,6 @@ esp_err_t ssd1306_init(i2c_port_t port, int sda_pin, int scl_pin, uint8_t i2c_ad
     write_cmd(0xD3); write_cmd(0x00); /* Display offset 0 */
     write_cmd(0x40); /* Start line 0 */
     write_cmd(0x8D); write_cmd(0x14); /* Charge pump on */
-    write_cmd(0x20); write_cmd(0x00); /* Horizontal addressing mode */
     write_cmd(0xA1); /* Segment remap */
     write_cmd(0xC8); /* COM output scan reversed */
     write_cmd(0xDA); write_cmd(0x12); /* COM pins config */
@@ -158,17 +179,32 @@ void ssd1306_update(void)
 {
     if (!s_is_present) return;
 
-    write_cmd(0x21); write_cmd(0); write_cmd(SSD1306_WIDTH - 1);
-    write_cmd(0x22); write_cmd(0); write_cmd((SSD1306_HEIGHT / 8) - 1);
+    /*
+     * Page-by-page update with column offset.
+     * Compatible with both SSD1306 and SH1106 (which has 2-column RAM offset).
+     */
+    for (uint8_t page = 0; page < 8; page++) {
+        uint8_t col_lo = (OLED_COL_OFFSET & 0x0F);
+        uint8_t col_hi = 0x10 | ((OLED_COL_OFFSET >> 4) & 0x0F);
 
-    i2c_cmd_handle_t link = i2c_cmd_link_create();
-    i2c_master_start(link);
-    i2c_master_write_byte(link, (s_i2c_addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(link, 0x40, true); /* Data stream */
-    i2c_master_write(link, s_buffer, sizeof(s_buffer), true);
-    i2c_master_stop(link);
-    i2c_master_cmd_begin(s_i2c_port, link, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(link);
+        write_cmd(0xB0 | page); /* Set page address */
+        write_cmd(col_lo);      /* Set lower column address */
+        write_cmd(col_hi);      /* Set higher column address */
+
+        i2c_cmd_handle_t link = i2c_cmd_link_create();
+        i2c_master_start(link);
+        i2c_master_write_byte(link, (s_i2c_addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_write_byte(link, 0x40, true); /* Data stream */
+        i2c_master_write(link, &s_buffer[page * SSD1306_WIDTH], SSD1306_WIDTH, true);
+        i2c_master_stop(link);
+        esp_err_t ret = i2c_master_cmd_begin(s_i2c_port, link, pdMS_TO_TICKS(20));
+        i2c_cmd_link_delete(link);
+
+        if (ret != ESP_OK) {
+            s_is_present = false;
+            break;
+        }
+    }
 }
 
 void ssd1306_draw_pixel(int x, int y, bool on)
@@ -207,7 +243,6 @@ void ssd1306_draw_string(int x, int y, const char *str)
 
 void ssd1306_draw_large_digit_string(int x, int y, const char *str)
 {
-    /* 2x scaled font for large readability */
     if (!str) return;
     int cursor_x = x;
     while (*str) {
@@ -280,11 +315,10 @@ void ssd1306_show_telemetry(const char *state, const char *bpm_str, int confiden
 
     /* State Header Banner */
     ssd1306_draw_rect(0, 0, 128, 14, true);
-    /* Inverted state text */
     if (state) {
         int len = strlen(state);
         int sx = (128 - len * 6) / 2;
-        /* Draw string inverted */
+        if (sx < 2) sx = 2;
         for (int i = 0; i < len; i++) {
             char c = state[i];
             if (c >= 32 && c <= 126) {

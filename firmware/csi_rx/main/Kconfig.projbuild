@@ -17,37 +17,67 @@ menu "WiBreathe CSI Receiver Configuration"
         int "UART CSI Stream Baud Rate"
         default 921600
         help
-            Serial baud rate for CSI_DATA logging to laptop.
+            Serial baud rate for CSI_DATA logging to laptop. Must match host settings.
+
+    choice WIBREATHE_CSI_SET
+        prompt "CSI Subcarrier Acquisition Set"
+        default WIBREATHE_CSI_LLTF_ONLY
+        help
+            Select whether to acquire LLTF only (128 values, 64 subcarriers)
+            or LLTF + HT-LTF (384 values in HT20 mode). LLTF-only is recommended
+            for 50 Hz streaming to conserve serial bandwidth headroom.
+
+        config WIBREATHE_CSI_LLTF_ONLY
+            bool "LLTF Only (128 values / 64 subcarriers, ~540 B/line)"
+
+        config WIBREATHE_CSI_LLTF_HTLTF
+            bool "LLTF + HT-LTF (384 values / 192 subcarriers, ~1450 B/line)"
+    endchoice
+
+    config WIBREATHE_EXPECTED_RATE_HZ
+        int "Expected CSI Packet Rate (Hz)"
+        default 50
+        range 1 100
+        help
+            Nominal transmitter packet rate used for serial bandwidth budget calculations.
 
     config WIBREATHE_OLED_ENABLE
-        bool "Enable SSD1306 OLED Display"
+        bool "Enable I2C OLED Display"
         default y
         help
-            Enables 128x64 I2C SSD1306 OLED display for status and live BPM readout.
+            Enables 128x64 I2C OLED display for status and live BPM readout.
+
+    choice WIBREATHE_OLED_CONTROLLER
+        prompt "OLED Display Controller IC"
+        default WIBREATHE_OLED_SSD1306
+        depends on WIBREATHE_OLED_ENABLE
+        help
+            Select controller IC. SSD1306 is standard; SH1106 has a 2-column RAM offset.
+
+        config WIBREATHE_OLED_SSD1306
+            bool "SSD1306 (Standard 128x64, 0-offset)"
+
+        config WIBREATHE_OLED_SH1106
+            bool "SH1106 (132x64 with 2-column offset)"
+    endchoice
 
     config WIBREATHE_OLED_SDA_PIN
         int "OLED I2C SDA GPIO Pin"
-        default 8 if IDF_TARGET_ESP32S3
-        default 21 if IDF_TARGET_ESP32
-        default 4 if IDF_TARGET_ESP32C3
-        default 8
+        default 21
         help
-            GPIO pin for I2C Data line. Default 8 on ESP32-S3, 21 on classic ESP32.
+            GPIO pin for I2C Data line. Default 21 on classic ESP32 DevKit V1 (ESP32-S3 uses GPIO 8).
 
     config WIBREATHE_OLED_SCL_PIN
         int "OLED I2C SCL GPIO Pin"
-        default 9 if IDF_TARGET_ESP32S3
-        default 22 if IDF_TARGET_ESP32
-        default 5 if IDF_TARGET_ESP32C3
-        default 9
+        default 22
         help
-            GPIO pin for I2C Clock line. Default 9 on ESP32-S3, 22 on classic ESP32.
+            GPIO pin for I2C Clock line. Default 22 on classic ESP32 DevKit V1 (ESP32-S3 uses GPIO 9).
 
     config WIBREATHE_OLED_I2C_ADDR
         hex "OLED I2C Address"
         default 0x3C
         help
-            I2C 7-bit slave address of SSD1306 (typically 0x3C or 0x3D).
+            I2C 7-bit slave address of OLED module (typically 0x3C or 0x3D).
 
     config WIBREATHE_NO_LINK_TIMEOUT_SEC
         int "Display 'No Link' Timeout (seconds)"

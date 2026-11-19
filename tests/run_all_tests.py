@@ -2,6 +2,12 @@ import os
 import sys
 import glob
 import importlib.util
+from pathlib import Path
+
+# Ensure src/ is in sys.path when running without editable install
+src_dir = str(Path(__file__).resolve().parent.parent / "src")
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
 def run_all():
     test_dir = os.path.dirname(os.path.abspath(__file__))

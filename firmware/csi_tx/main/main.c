@@ -1,9 +1,14 @@
 /*
- * WiBreathe CSI Transmitter (ESP32 / ESP32-S3 / ESP32-C3)
- * Target: ESP-IDF v5.x
+ * WiBreathe CSI Transmitter
+ * Primary Target: Classic ESP32 DevKit V1 (ESP-32D / ESP-WROOM-32, 4 MB flash)
+ * Secondary Guards: ESP32-S3, ESP32-C3
+ *
+ * UNVERIFIED ON PHYSICAL HARDWARE:
+ *  - esp_now_set_peer_rate_config rate enum behavior on classic ESP32 in ESP-IDF v5.x.
+ *  - Radio transmission stability without dynamic Wi-Fi power throttling.
  *
  * Transmits broadcast packets at steady non-drifting cadence using ESP-NOW with
- * an OFDM/HT physical rate (MCS0) required to trigger CSI generation at the receiver.
+ * forced 802.11n MCS0 rate (OFDM) to trigger CSI demodulation at the receiver.
  */
 
 #include <stdio.h>
@@ -18,6 +23,7 @@
 #include "esp_netif.h"
 #include "esp_now.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -46,6 +52,23 @@ typedef struct __attribute__((packed)) {
     int64_t timestamp_us; /* Monotonic microsecond clock */
     uint8_t padding[16];  /* Fixed packet size */
 } wibreathe_packet_t;
+
+static const char *get_reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+        case ESP_RST_POWERON:   return "Power-on event";
+        case ESP_RST_EXT:       return "External pin reset";
+        case ESP_RST_SW:        return "Software reset";
+        case ESP_RST_PANIC:     return "Software exception / panic";
+        case ESP_RST_INT_WDT:   return "Interrupt watchdog reset";
+        case ESP_RST_TASK_WDT:  return "Task watchdog reset";
+        case ESP_RST_WDT:       return "Other watchdog reset";
+        case ESP_RST_DEEPSLEEP: return "Deep-sleep wake reset";
+        case ESP_RST_BROWNOUT:  return "Brownout reset (VDD voltage dip)";
+        case ESP_RST_SDIO:      return "SDIO reset";
+        default:                return "Unknown reset reason";
+    }
+}
 
 static void wifi_init_sta(void)
 {
@@ -89,6 +112,8 @@ static void espnow_init_transmitter(void)
      * CRITICAL: By default, ESP-NOW sends frames at 1 Mbps DSSS (802.11b).
      * The ESP32 Wi-Fi hardware PHY only generates Channel State Information (CSI)
      * for OFDM packets (802.11g/n). We explicitly force an 802.11n MCS0 rate.
+     *
+     * UNVERIFIED: Check esp_now_rate_config_t field availability in the exact ESP-IDF v5.x release.
      */
     esp_now_rate_config_t rate_config = {
         .phymode = WIFI_PHY_MODE_HT20,
@@ -132,7 +157,7 @@ static void tx_worker_task(void *pvParameters)
         if (delay_us > 1000) {
             vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
         } else if (delay_us < -50000) {
-            /* If fell severely behind (e.g. system interrupt), resynchronize */
+            /* If fell severely behind, resynchronize */
             next_send_time = now;
         }
 
@@ -149,6 +174,13 @@ static void tx_worker_task(void *pvParameters)
 
 void app_main(void)
 {
+    esp_reset_reason_t reason = esp_reset_reason();
+    ESP_LOGI(TAG, "Board Reset Reason: %d (%s)", reason, get_reset_reason_str(reason));
+    if (reason == ESP_RST_BROWNOUT) {
+        ESP_LOGE(TAG, "CRITICAL: Brownout reset detected! VDD supply dipped below brownout threshold. "
+                      "Check USB cable resistance, host USB port current capacity, or add a decoupling capacitor.");
+    }
+
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -156,10 +188,10 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "===============================================");
-    ESP_LOGI(TAG, " WiBreathe CSI Transmitter - ESP-IDF v5.x");
+    ESP_LOGI(TAG, "=========================================================");
+    ESP_LOGI(TAG, " WiBreathe CSI Transmitter (Classic ESP32 DevKit V1)");
     ESP_LOGI(TAG, " Notice: Research prototype - Not a medical device");
-    ESP_LOGI(TAG, "===============================================");
+    ESP_LOGI(TAG, "=========================================================");
 
     wifi_init_sta();
     espnow_init_transmitter();

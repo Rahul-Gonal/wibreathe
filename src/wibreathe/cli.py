@@ -430,14 +430,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_sim.add_argument("--bpm", type=float, default=15.0, help="Target respiration rate (BPM)")
     p_sim.add_argument("-d", "--duration", type=float, default=60.0, help="Duration in seconds")
     p_sim.add_argument("-r", "--rate", type=float, default=50.0, help="Packet sample rate in Hz")
-    p_sim.add_argument("--out", default="data/raw/synthetic_csi.csv", help="Output CSV path")
+    p_sim.add_argument("-o", "--out", "--output", dest="out", default="data/raw/synthetic_csi.csv", help="Output CSV path")
     p_sim.add_argument("--labels", default="data/reference/synthetic_labels.csv", help="Ground truth labels path")
     p_sim.add_argument("--seed", type=int, default=42, help="Random seed")
 
     # plot
     p_plot = subparsers.add_parser("plot", help="Generate offline analysis plots")
     p_plot.add_argument("csv", help="Path to raw CSI CSV file")
-    p_plot.add_argument("-o", "--out", help="Output PNG path")
+    p_plot.add_argument("-o", "--out", "--output", dest="out", help="Output PNG path")
 
     # replay
     p_rep = subparsers.add_parser("replay", help="Replay recorded CSI CSV stream through pipeline")
@@ -463,20 +463,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_cal.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate")
     p_cal.add_argument("-d", "--duration", type=float, default=30.0, help="Duration in seconds")
     p_cal.add_argument("-f", "--file", help="Calibrate from existing CSV file instead of live port")
-    p_cal.add_argument("-o", "--out", help="Output calibration JSON path")
+    p_cal.add_argument("-o", "--out", "--output", dest="out", help="Output calibration JSON path")
 
     # tap
     p_tap = subparsers.add_parser("tap", help="Reference tap logger for ground-truth breath recording")
     p_tap.add_argument("--volunteer", required=True, help="Participant code (e.g. V01)")
     p_tap.add_argument("--mode", default="normal", help="Breathing mode")
-    p_tap.add_argument("-o", "--out", help="Custom output reference CSV path")
+    p_tap.add_argument("-o", "--out", "--output", dest="out", help="Custom output reference CSV path")
 
     # eval & evaluate
     for ev_cmd in ("eval", "evaluate"):
         p_ev = subparsers.add_parser(ev_cmd, help="Compute quantitative benchmark evaluation metrics")
         p_ev.add_argument("--est", required=True, help="Estimated window states/rates CSV")
         p_ev.add_argument("--ref", required=True, help="Reference ground truth CSV")
-        p_ev.add_argument("-o", "--out", default="data/results", help="Output directory for reports")
+        p_ev.add_argument("-o", "--out", "--output", dest="out", default="data/results", help="Output directory for reports")
 
     args = parser.parse_args(argv)
 

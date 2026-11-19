@@ -27,7 +27,7 @@ def test_cli_simulate_and_replay():
         csv_out = str(tmp_path / "sim.csv")
         labels_out = str(tmp_path / "labels.csv")
 
-        # Run simulate
+        # Run simulate with --out
         ret_sim = main([
             "simulate",
             "--duration", "3.0",
@@ -38,6 +38,18 @@ def test_cli_simulate_and_replay():
         assert ret_sim == 0
         assert Path(csv_out).is_file()
         assert Path(labels_out).is_file()
+
+        # Run simulate with --output alias
+        csv_out2 = str(tmp_path / "sim2.csv")
+        ret_sim2 = main([
+            "simulate",
+            "--duration", "1.0",
+            "--rate", "50.0",
+            "--scenario", "bed_exit",
+            "--output", csv_out2,
+        ])
+        assert ret_sim2 == 0
+        assert Path(csv_out2).is_file()
 
         # Run replay through shared WiBreathePipeline
         ret_rep = main([

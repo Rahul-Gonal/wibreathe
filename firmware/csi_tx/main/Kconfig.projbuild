@@ -1,0 +1,24 @@
+menu "WiBreathe CSI Transmitter Configuration"
+
+    config WIBREATHE_TX_CHANNEL
+        int "Wi-Fi Primary Channel"
+        default 6
+        range 1 13
+        help
+            Primary 2.4 GHz channel for broadcast packets. Must match the receiver.
+
+    config WIBREATHE_TX_RATE_HZ
+        int "Packet Transmission Cadence (Hz)"
+        default 50
+        range 10 100
+        help
+            Frequency of ESP-NOW broadcast packet transmissions.
+
+    config WIBREATHE_TX_POWER_DBM
+        int "Wi-Fi TX Power (dBm)"
+        default 20
+        range 8 20
+        help
+            Transmission power level for the transmitter Wi-Fi radio.
+
+endmenu

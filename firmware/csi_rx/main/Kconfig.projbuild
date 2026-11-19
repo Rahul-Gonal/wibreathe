@@ -1,0 +1,65 @@
+menu "WiBreathe CSI Receiver Configuration"
+
+    config WIBREATHE_RX_CHANNEL
+        int "Wi-Fi Reception Channel"
+        default 6
+        range 1 13
+        help
+            Channel to listen on. Must match transmitter channel.
+
+    config WIBREATHE_FILTER_MAC
+        string "Filter by Transmitter MAC Address"
+        default ""
+        help
+            Format: AA:BB:CC:DD:EE:FF. Leave blank to accept packets from all transmitters.
+
+    config WIBREATHE_SERIAL_BAUD
+        int "UART CSI Stream Baud Rate"
+        default 921600
+        help
+            Serial baud rate for CSI_DATA logging to laptop.
+
+    config WIBREATHE_OLED_ENABLE
+        bool "Enable SSD1306 OLED Display"
+        default y
+        help
+            Enables 128x64 I2C SSD1306 OLED display for status and live BPM readout.
+
+    config WIBREATHE_OLED_SDA_PIN
+        int "OLED I2C SDA GPIO Pin"
+        default 8 if IDF_TARGET_ESP32S3
+        default 21 if IDF_TARGET_ESP32
+        default 4 if IDF_TARGET_ESP32C3
+        default 8
+        help
+            GPIO pin for I2C Data line. Default 8 on ESP32-S3, 21 on classic ESP32.
+
+    config WIBREATHE_OLED_SCL_PIN
+        int "OLED I2C SCL GPIO Pin"
+        default 9 if IDF_TARGET_ESP32S3
+        default 22 if IDF_TARGET_ESP32
+        default 5 if IDF_TARGET_ESP32C3
+        default 9
+        help
+            GPIO pin for I2C Clock line. Default 9 on ESP32-S3, 22 on classic ESP32.
+
+    config WIBREATHE_OLED_I2C_ADDR
+        hex "OLED I2C Address"
+        default 0x3C
+        help
+            I2C 7-bit slave address of SSD1306 (typically 0x3C or 0x3D).
+
+    config WIBREATHE_NO_LINK_TIMEOUT_SEC
+        int "Display 'No Link' Timeout (seconds)"
+        default 5
+        range 2 30
+        help
+            Time without receiving downstream DISP command before showing 'No Link' screen.
+
+    config WIBREATHE_ONDEVICE_MOTION
+        bool "Enable On-Device Variance Motion Detection (Stretch Goal)"
+        default n
+        help
+            Enables lightweight rolling-variance motion detection directly on ESP32.
+
+endmenu

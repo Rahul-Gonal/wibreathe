@@ -15,47 +15,6 @@
 
 WiBreathe senses minute chest wall displacements (~1–12 mm) and gross occupant body movement by measuring subcarrier-level Channel State Information (CSI) from 802.11n Wi-Fi OFDM packets transmitted across a bed or cot.
 
-```mermaid
-flowchart LR
-    subgraph Hardware ["Hardware Layer (Classic ESP32 DevKit V1)"]
-        TX["csi_tx Node<br/>(ESP-NOW 50 Hz<br/>HT20 MCS0 OFDM)"]
-        RF[("2.4 GHz Channel 6<br/>Wi-Fi Multipath")]
-        RX["csi_rx Node<br/>(FreeRTOS Decoupled<br/>Single UART0 Writer)"]
-        OLED["SSD1306/SH1106 OLED<br/>(State, BPM, Motion)"]
-        
-        TX -->|Transmits| RF
-        RF -->|Reflects off Chest| RX
-        RX -->|I2C 400kHz (D21/D22)| OLED
-    end
-
-    subgraph Host ["Host Computer (Python 3.10 - 3.14 Pipeline)"]
-        UART["SerialReader<br/>(921,600 baud, DTR/RTS Safe)"]
-        Parser["CSI Parser<br/>(25-col CSV, int8 I/Q)"]
-        
-        subgraph DSP ["WiBreathePipeline (DSP & FSM)"]
-            SubSel["Subcarrier Selector<br/>(Variance / SNR / Null Drop)"]
-            Hampel["Causal Hampel<br/>(Relative Floor Outlier Reject)"]
-            Resample["Uniform Resampler<br/>(20 Hz Regular Grid)"]
-            Bandpass["Butterworth SOS<br/>(0.1 - 0.5 Hz Dynamic Biquad)"]
-            Spectral["Respiration Estimator<br/>(8x Zero-Pad + Peak Track)"]
-            MotionDet["Motion Detector<br/>(Inter-frame MAD Hysteresis)"]
-            FSM["State Machine<br/>(NO_DATA, CALIBRATING,<br/>NO_PERSON, STILL,<br/>MOVING, EXIT)"]
-        end
-
-        DispLink["DisplayLink<br/>(1 Hz Downstream DISP)"]
-        Viz["Live Dashboard &<br/>Offline Reports"]
-        
-        RX -->|Single USB-C UART0| UART
-        UART --> Parser
-        Parser --> SubSel --> Hampel --> Resample --> Bandpass --> Spectral
-        Parser --> MotionDet
-        Spectral & MotionDet --> FSM
-        FSM --> DispLink -->|UART Tx| RX
-        FSM & Spectral --> Viz
-    end
-```
-
----
 
 ## 2. Hardware Wiring & Bill of Materials
 

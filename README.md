@@ -4,17 +4,12 @@
 [![ESP-IDF v5.x](https://img.shields.io/badge/ESP--IDF-v5.x-red.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Experiential Learning Phase 2 Prototype**  
+**Experiential Learning Prototype**  
 **Institution**: RV College of Engineering, Bengaluru  
-**Team**: Mugglelabs  
+**Team**: Mugglelabs 
 
----
 
-> [!CAUTION]
-> **ACADEMIC RESEARCH PROTOTYPE — NOT A MEDICAL DEVICE**  
-> WiBreathe is designed solely for engineering education and academic contactless RF sensing research. It has **NOT** undergone medical device certification (e.g., FDA 510(k), CE-MDR, CDSCO), is **NOT** clinically validated, and **MUST NEVER** be used for medical diagnosis, clinical vital sign monitoring, apnea alarms, pediatric crib monitoring, or critical care life support.
 
----
 
 ## 1. System Architecture
 

@@ -82,11 +82,11 @@ def test_cli_eval_and_evaluate_alias():
         est_csv = tmp_path / "est.csv"
         out_dir = tmp_path / "results"
 
-        with open(ref_csv, "w", encoding="utf-8") as f:
+        with open(ref_csv, "w", newline="", encoding="utf-8") as f:
             f.write("start_time_s,end_time_s,state,target_bpm\n")
             f.write("0.0,30.0,STILL,16.0\n")
 
-        with open(est_csv, "w", encoding="utf-8") as f:
+        with open(est_csv, "w", newline="", encoding="utf-8") as f:
             f.write("timestamp_s,bpm,confidence,state\n")
             f.write("15.0,16.1,80.0,STILL\n")
 

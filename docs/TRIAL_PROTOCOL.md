@@ -81,19 +81,23 @@ Prior to seating the participant, perform this equipment check:
 ## 5. Trial Procedure (Step-by-Step)
 
 ### Phase 1: Empty-Bed Calibration Baseline (Mandatory)
-Before the volunteer enters the bed, record an empty-bed baseline:
+Before the volunteer enters the bed, record and calibrate an empty-bed baseline:
 1. Ensure the mattress, pillow, and bedsheets are arranged normally.
 2. Ensure the room is completely empty of humans and pets.
 3. Record 60 seconds of empty bed data:
    ```bash
    python -m wibreathe record \
-       --port /dev/tty.usbserial-0001 \
+       --port <RX_PORT> \
        --baud 921600 \
        --volunteer V00 \
        --mode empty_bed \
        --duration 60
    ```
-4. Verify in the output summary that motion metric $M(t) < \tau_{\text{motion}}$ consistently.
+4. Calibrate the empty-bed variance signature:
+   ```bash
+   python -m wibreathe calibrate --mode empty --file data/raw/csi_V00_empty_bed_*.csv --out config/calibration_empty.json
+   ```
+5. Verify in the output summary that motion metric $M(t) < \tau_{\text{motion}}$ consistently.
 
 ### Phase 2: Volunteer Settling
 1. Invite the volunteer to lie supine (face up) on the bed with their head on the pillow.

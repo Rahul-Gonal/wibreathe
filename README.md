@@ -1,7 +1,7 @@
 # WiBreathe: Contactless Respiration & Bed-Exit Detection Using Wi-Fi CSI on ESP32
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![ESP-IDF v5.x](https://img.shields.io/badge/ESP--IDF-v5.5.6-red.svg)](https://docs.espressif.com/projects/esp-idf/en/release-v5.5/)
+[![ESP-IDF v5.x](https://img.shields.io/badge/ESP--IDF-v5.x-red.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Experiential Learning Phase 2 Prototype**  
@@ -22,35 +22,35 @@ WiBreathe senses minute chest wall displacements (~1–12 mm) and gross occupant
 
 ```mermaid
 flowchart LR
-    subgraph Hardware ["Hardware Layer (ESP32-S3)"]
+    subgraph Hardware ["Hardware Layer (Classic ESP32 DevKit V1)"]
         TX["csi_tx Node<br/>(ESP-NOW 50 Hz<br/>HT20 MCS0 OFDM)"]
         RF[("2.4 GHz Channel 6<br/>Wi-Fi Multipath")]
-        RX["csi_rx Node<br/>(Promiscuous CSI Capture<br/>FreeRTOS Decoupled)"]
-        OLED["SSD1306 OLED<br/>(State, BPM, Motion)"]
+        RX["csi_rx Node<br/>(FreeRTOS Decoupled<br/>Single UART0 Writer)"]
+        OLED["SSD1306/SH1106 OLED<br/>(State, BPM, Motion)"]
         
         TX -->|Transmits| RF
         RF -->|Reflects off Chest| RX
-        RX -->|I2C 400kHz| OLED
+        RX -->|I2C 400kHz (D21/D22)| OLED
     end
 
-    subgraph Host ["Host Computer (Python 3.10+ Pipeline)"]
-        UART["SerialReader<br/>(921,600 baud)"]
+    subgraph Host ["Host Computer (Python 3.10 - 3.14 Pipeline)"]
+        UART["SerialReader<br/>(921,600 baud, DTR/RTS Safe)"]
         Parser["CSI Parser<br/>(25-col CSV, int8 I/Q)"]
         
-        subgraph DSP ["DSP Pipeline"]
-            SubSel["Subcarrier Selector<br/>(Variance / SNR / PCA)"]
-            Hampel["Causal Hampel<br/>(Outlier Rejection)"]
-            Resample["Uniform Resampler<br/>(20 Hz Grid)"]
-            Bandpass["Butterworth SOS<br/>(0.1 - 0.5 Hz Biquad)"]
-            Spectral["FFT Estimator<br/>(8x Pad + Parabolic Interp)"]
-            MotionDet["Motion Detector<br/>(Dual-Threshold MAD)"]
+        subgraph DSP ["WiBreathePipeline (DSP & FSM)"]
+            SubSel["Subcarrier Selector<br/>(Variance / SNR / Null Drop)"]
+            Hampel["Causal Hampel<br/>(Relative Floor Outlier Reject)"]
+            Resample["Uniform Resampler<br/>(20 Hz Regular Grid)"]
+            Bandpass["Butterworth SOS<br/>(0.1 - 0.5 Hz Dynamic Biquad)"]
+            Spectral["Respiration Estimator<br/>(8x Zero-Pad + Peak Track)"]
+            MotionDet["Motion Detector<br/>(Inter-frame MAD Hysteresis)"]
+            FSM["State Machine<br/>(NO_DATA, CALIBRATING,<br/>NO_PERSON, STILL,<br/>MOVING, EXIT)"]
         end
 
-        FSM["State Machine<br/>(NO_DATA, CALIBRATING,<br/>NO_PERSON, STILL,<br/>MOVING, BED_EXIT)"]
         DispLink["DisplayLink<br/>(1 Hz Downstream DISP)"]
         Viz["Live Dashboard &<br/>Offline Reports"]
         
-        RX -->|USB UART| UART
+        RX -->|Single USB-C UART0| UART
         UART --> Parser
         Parser --> SubSel --> Hampel --> Resample --> Bandpass --> Spectral
         Parser --> MotionDet
@@ -65,219 +65,219 @@ flowchart LR
 ## 2. Hardware Wiring & Bill of Materials
 
 ### 2.1 Bill of Materials
-- **2x ESP32-S3 DevKitC-1** (or classic ESP32 DevKit v1 / ESP32-C3)
-- **1x 0.96" SSD1306 128x64 I2C OLED Display**
-- **2x 4-wire USB data cables** (Type-C or Micro-USB depending on board)
-- **1x 5V USB battery pack** (for isolated TX node operation)
-- **4x Female-to-Female jumper wires**
+- **2x Classic ESP32 DevKit V1** (Module marked **ESP-32D N4**, classic ESP32, 4 MB flash, single USB-C port wired to CP2102 or CH340 USB-UART bridge)
+- **1x 0.96" I2C OLED Display** (128x64 pixels, SSD1306 or SH1106 controller, address `0x3C`)
+- **2x 4-wire USB data cables** (USB-C to USB-A or USB-C; avoid charge-only cables)
+- **1x 5V USB battery pack or AC-DC adapter** (for isolated TX node operation)
+- **4x Female-to-Female jumper wires** (< 15 cm)
 
 ### 2.2 Receiver Wiring Table
-Connect the SSD1306 OLED display to the receiver board:
+Connect the OLED display to the receiver board:
 
-| SSD1306 OLED Pin | ESP32-S3 Pin | Classic ESP32 Pin | ESP32-C3 Pin | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **GND** | **GND** | **GND** | **GND** | Ground |
-| **VCC** | **3V3** | **3V3** | **3V3** | 3.3V Power Rail |
-| **SDA** | **GPIO 8** | **GPIO 21** | **GPIO 4** | I2C Serial Data |
-| **SCL** | **GPIO 9** | **GPIO 22** | **GPIO 5** | I2C Serial Clock |
+| OLED Pin | ESP32 DevKit V1 Pin | Pin Description / Location | Electrical Connection Notes |
+| :---: | :---: | :--- | :--- |
+| **GND** | **GND** | Ground pin | Common system ground. |
+| **VCC** | **3V3** | **3.3V Output Rail** | **CRITICAL**: Connect to **3V3 ONLY**. Exceeding 3.6V (VIN/5V) will burn the display controller! |
+| **SDA** | **GPIO 21 (D21)** | Hardware I2C Serial Data (Silk screen **D21**) | Jumper wire to OLED SDA. Firmware enables internal pullup. |
+| **SCL** | **GPIO 22 (D22)** | Hardware I2C Serial Clock (Silk screen **D22**) | Jumper wire to OLED SCL. Firmware enables internal pullup. |
 
 > [!NOTE]
-> On ESP32-S3 boards equipped with dual Type-C ports, plug the cable into the port marked **UART** (connected to the CP2102/CH340 chip). Do not use the native USB port.
-
-See [docs/WIRING.md](file:///Users/rgo75/work/wibreathe/docs/WIRING.md) for full hardware schematics and noise decoupling advice.
+> **Secondary Guarded Options**:
+> - ESP32-S3 DevKitC-1: `SDA = GPIO 8`, `SCL = GPIO 9`, `VCC = 3V3`, `GND = GND`.
+> - ESP32-C3 DevKitM-1: `SDA = GPIO 4`, `SCL = GPIO 5`, `VCC = 3V3`, `GND = GND`.
 
 ---
 
-## 3. Toolchain Installation
+## 3. Host Software Setup (macOS, Windows, and Linux)
 
-### 3.1 Host Python Environment (macOS / Linux / Windows)
-WiBreathe requires **Python 3.10+**.
+WiBreathe supports Python **3.10 to 3.14** across macOS, Windows, and Linux equally. Always work inside a virtual environment.
 
+### 3.1 Environment Activation & Installation
+
+#### On macOS and Linux:
 ```bash
-# Clone the repository
-git clone https://github.com/mugglelabs/wibreathe.git
-cd wibreathe
-
-# Create and activate virtual environment
+# Create virtual environment
 python3 -m venv .venv
-source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 
-# Install dependencies and package in editable mode
+# Upgrade pip and install package in editable mode
 pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 3.2 ESP-IDF v5.x Setup
-Target: **ESP-IDF v5.5.6** (or any ESP-IDF v5.x release).
+#### On Windows (PowerShell):
+```powershell
+# Create virtual environment
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 
-```bash
-# macOS / Linux Prerequisites
-sudo apt-get install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util  # Linux
-# Or macOS with Homebrew:
-brew install cmake ninja dfu-util
-
-# Clone ESP-IDF v5.5
-mkdir -p ~/esp
-cd ~/esp
-git clone -b release/v5.5 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.5
-cd esp-idf-v5.5
-./install.sh esp32s3,esp32,esp32c3
-
-# Activate ESP-IDF environment (run in your shell before building firmware)
-. ~/esp/esp-idf-v5.5/export.sh
+# Upgrade pip and install package in editable mode
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
 ```
+
+### 3.2 Running the Test Suite
+The official way to run tests is `pytest -q`:
+```bash
+pytest -q
+```
+*(If pytest is not installed, run the standalone runner: `python tests/run_all_tests.py`)*
 
 ---
 
-## 4. Firmware Build & Flashing
+## 4. Firmware Build & Flashing (ESP-IDF v5.x)
 
-### 4.1 Transmitter Node (`csi_tx`)
+WiBreathe firmware builds with any modern ESP-IDF v5.x installed via the Espressif Installation Manager.
+*(To record your build environment, run `idf.py --version`)*
+
+### 4.1 Activate ESP-IDF Environment
+- **macOS / Linux**: `source $HOME/esp/esp-idf/export.sh`
+- **Windows (PowerShell)**: `. $HOME\esp\esp-idf\export.ps1`
+
+### 4.2 Transmitter Node (`firmware/csi_tx`)
 ```bash
 cd firmware/csi_tx
 
-# Set silicon target (esp32s3, esp32, or esp32c3)
-idf.py set-target esp32s3
+# Retarget to classic ESP32
+idf.py set-target esp32
 
-# Build and flash to TX board
+# Build and flash to TX node
 idf.py build
-idf.py -p /dev/tty.usbserial-TX_PORT -b 921600 flash
+idf.py -p <TX_PORT> -b 921600 flash monitor
 ```
+*(Some DevKit clones require holding down the physical **BOOT** button during flashing)*
 
-### 4.2 Receiver Node (`csi_rx`)
+### 4.3 Receiver Node (`firmware/csi_rx`)
 ```bash
 cd ../csi_rx
 
-# Set target, build, and flash to RX board
-idf.py set-target esp32s3
+# Retarget to classic ESP32
+idf.py set-target esp32
+
+# (Optional) Select SH1106 controller if using non-SSD1306 OLED:
+# idf.py menuconfig -> WiBreathe Receiver Configuration -> OLED Display Controller
+
+# Build and flash to RX node
 idf.py build
-idf.py -p /dev/tty.usbserial-RX_PORT -b 921600 flash monitor
+idf.py -p <RX_PORT> -b 921600 flash monitor
 ```
 
 ---
 
 ## 5. Command-Line Interface (CLI) Reference
 
-The `wibreathe` CLI provides an integrated suite of tools for hardware bringup, data streaming, synthetic simulation, and clinical evaluation:
+All commands run via `python -m wibreathe <subcommand>`:
 
 ### 5.1 `list-ports`
-Detect available serial ports and USB-UART bridges:
+List connected serial ports cross-platform (`/dev/cu.*` on macOS, `COMx` on Windows, `/dev/ttyUSB*` on Linux):
 ```bash
 python -m wibreathe list-ports
 ```
 
 ### 5.2 `check-link`
-Verify CSI packet rate (nominal 50 Hz), packet loss (< 2%), and RSSI:
+Verify physical serial connection, packet ingress rate (~50 Hz), packet loss, and RSSI:
 ```bash
-python -m wibreathe check-link --port /dev/tty.usbserial-0001 --baud 921600 --duration 10
+python -m wibreathe check-link --port <PORT> --baud 921600 --duration 10
 ```
 
-### 5.3 `record`
-Stream and log live raw CSI packets to `data/raw/` with JSON metadata sidecars:
+### 5.3 `live`
+Run live streaming pipeline from serial reader through DSP and state machine with optional OLED display link and plotting:
 ```bash
-python -m wibreathe record \
-    --port /dev/tty.usbserial-0001 \
-    --baud 921600 \
-    --volunteer V01 \
-    --mode normal \
-    --duration 60
+# Headless terminal dashboard
+python -m wibreathe live --port <PORT> --baud 921600 --headless
+
+# With OLED downlink feedback and calibration profile
+python -m wibreathe live --port <PORT> --baud 921600 --display --calibration config/calibration_empty.json
 ```
 
-### 5.4 `simulate`
-Generate biologically realistic synthetic CSI packets (respiration, harmonics, noise, motion bursts, bed-exit) for pipeline validation without hardware:
+### 5.4 `calibrate`
+Learn baseline variance and stillness threshold for empty bed or occupied stillness:
 ```bash
-python -m wibreathe simulate \
-    --duration 60 \
-    --rate 16.0 \
-    --noise 0.2 \
-    --out data/raw/sim_respiration.csv
+python -m wibreathe calibrate --mode empty --file data/raw/csi_V00_empty_bed.csv --out config/calibration_empty.json
+python -m wibreathe calibrate --mode occupied --file data/raw/csi_V01_still.csv --out config/calibration_occupied.json
 ```
 
-### 5.5 `replay`
-Replay recorded or synthetic CSV sessions through the live DSP, state machine, and OLED display link:
+### 5.5 `record`
+Stream and log raw CSI packets to `data/raw/` with JSON metadata sidecars:
 ```bash
-python -m wibreathe replay --file data/raw/sim_respiration.csv --speed 1.0
+python -m wibreathe record --port <PORT> --baud 921600 --volunteer V01 --mode normal --duration 120
 ```
 
-### 5.6 `plot`
-Generate publication-quality 4-panel diagnostic PNG figures:
+### 5.6 `simulate`
+Generate biologically realistic synthetic CSI packets for testing without hardware:
 ```bash
-python -m wibreathe plot --file data/raw/sim_respiration.csv --out data/results/plot.png
+python -m wibreathe simulate --duration 60 --rate 50.0 --scenario still --output data/raw/sim_still.csv --labels data/reference/labels_still.csv
 ```
 
-### 5.7 `tap`
-Cross-platform keystroke reference tap logger for synchronizing volunteer ground truth:
+### 5.7 `replay`
+Replay recorded or synthetic CSV sessions through the unified pipeline:
+```bash
+python -m wibreathe replay --file data/raw/sim_still.csv --speed 1.0
+```
+
+### 5.8 `plot`
+Generate 4-panel diagnostic PNG figures:
+```bash
+python -m wibreathe plot --file data/raw/sim_still.csv --out data/results/diagnostic_plot.png
+```
+
+### 5.9 `tap`
+Cross-platform keystroke reference tap tool for synchronizing volunteer ground truth:
 ```bash
 python -m wibreathe tap --volunteer V01 --mode normal --session 1
 ```
 
-### 5.8 `eval`
-Compute quantitative benchmarks (MAE, RMSE, bias, coverage, confusion matrix, and Bland-Altman statistics):
+### 5.10 `eval` / `evaluate`
+Compute quantitative benchmarks (MAE, RMSE, bias, coverage, confusion matrix, Bland-Altman):
 ```bash
-python -m wibreathe eval \
-    --est data/processed/V01_normal_est.csv \
-    --ref data/reference/V01_normal_ref.csv \
-    --out data/results/V01_eval_report.md
+python -m wibreathe eval --est data/processed/estimates.csv --ref data/reference/reference.csv -o data/results
 ```
 
 ---
 
-## 6. Configuration Guide (`config/default.yaml`)
+## 6. Serial Bandwidth Budget Table
 
-All signal processing, hardware, and state machine parameters are centralized in `config/default.yaml`:
+Throughput limit at 921,600 baud: **92.16 KB/s** ($921,600 / 10$ bits/byte).
 
-```yaml
-serial:
-  baudrate: 921600
-  buffer_size: 65536
-  read_timeout_s: 2.0
-
-subcarriers:
-  null_indices: [-32, -31, -30, -29, 0, 28, 29, 30, 31]
-  selection_method: "variance"  # variance, snr, pca, or mean
-  top_k: 5
-
-resample:
-  target_rate_hz: 20.0
-  max_gap_s: 0.5
-
-hampel:
-  window_size: 7
-  n_sigmas: 3.0
-  min_deviation_floor: 3.0
-
-bandpass:
-  lowcut_hz: 0.10   # 6 breaths per minute
-  highcut_hz: 0.50  # 30 breaths per minute
-  order: 4
-
-breathing:
-  fft_zero_pad_factor: 8
-  parabolic_interpolation: true
-  min_prominence: 0.05
-  window_duration_s: 15.0
-  step_duration_s: 1.0
-
-motion:
-  mad_low_threshold: 0.04
-  mad_high_threshold: 0.12
-  window_duration_s: 1.0
-
-state_machine:
-  empty_bed_threshold: 0.015
-  no_person_timeout_s: 5.0
-  bed_exit_motion_decay_s: 3.0
-```
+| Configuration | `len` (int8) | Subcarriers | Avg Line Length | 25 Hz Stream | 50 Hz Stream (Default) | 100 Hz Stream | 921.6k Bus Load (50 Hz) | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **LLTF Only** (Classic ESP32) | **128** | 64 | **~390 bytes** | 9.75 KB/s | **19.5 KB/s** | 39.0 KB/s | **21.2%** | **RECOMMENDED** |
+| **HT-LTF Only** | **128** | 64 | **~390 bytes** | 9.75 KB/s | **19.5 KB/s** | 39.0 KB/s | **21.2%** | Supported |
+| **LLTF + HT-LTF** | **384** | 64 x 3 | **~1,100 bytes** | 27.5 KB/s | **55.0 KB/s** | **110.0 KB/s** (OVERFLOW) | **59.7%** | High load (100 Hz drops) |
 
 ---
 
-## 7. Data Folder Organization
+## 7. Troubleshooting & Pitfalls Matrix
 
-The data directory strictly follows this structure (all data directories are excluded from git):
+| # | Issue / Pitfall | Likely Cause | Handling & Resolution |
+| :---: | :--- | :--- | :--- |
+| **1** | **No port enumerates** | Charge-only USB cable | First troubleshooting check: replace with verified 4-wire data cable. |
+| **2** | **Zero CSI packets received** | 802.11b rate default on ESP-NOW | ESP-NOW defaults to 802.11b DSSS, which lacks OFDM CSI. Firmware forces `WIFI_PHY_RATE_MCS0_LGI` HT20 rate. |
+| **3** | **Garbled serial characters** | Baud rate mismatch | Ensure host reader is configured to `921600` baud. Check ESP32 crystal frequency (40 MHz default). |
+| **4** | **OLED display is blank** | I2C pin mismatch or power error | Verify wiring: `SDA=GPIO 21 (D21)`, `SCL=GPIO 22 (D22)`, `VCC=3V3` (never VIN/5V). Add 4.7kΩ pullups if jumpers > 15 cm. |
+| **5** | **Left 2 columns distorted on OLED** | Controller is SH1106, not SSD1306 | SH1106 has a 132-column internal RAM. Set `CONFIG_WIBREATHE_OLED_SH1106=y` in Kconfig to apply 2-column offset. |
+| **6** | **Breathing peak suppressed or flatline** | Hampel filter clamping natural slope | Set `relative_floor_ratio: 0.15` in `config/default.yaml` to scale floor dynamically with signal amplitude. |
+| **7** | **Subharmonic beats in respiration** | Windowed median filter on non-integer periods | Use linear or polynomial detrending; avoid short rolling median detrending on sine waves. |
+| **8** | **CSI callback crashes on boot** | Dynamic memory allocation in Wi-Fi task | Never call `malloc()` or `printf()` inside callback. Callback uses non-blocking `xQueueSend(..., 0)`. |
+| **9** | **Serial output interleaved mid-line** | Multiple tasks writing to UART0 simultaneously | Handled in firmware: `csi_print_task` is the single exclusive writer to UART0; log level set to `WARN`. |
+| **10** | **OLED absent crashes firmware** | Blocking I2C driver on disconnected bus | Driver handles NACK cleanly: if display is disconnected, returns immediately with 0 delay. |
+| **11** | **Spurious bed-exit alerts** | Empty bed threshold uncalibrated | Run `python -m wibreathe calibrate --mode empty` to establish real room baseline variance. |
+| **12** | **Outlier burst on body turn** | Rapid multipath shift | Causal Hampel filter and dual-threshold MAD motion detector flag `MOVING` state to suppress spurious BPM. |
+| **13** | **Linux port permission denied** | User not in dialout group | Run `sudo usermod -a -G dialout $USER`, log out, and log back in. |
+| **14** | **macOS terminal blocks on serial open** | Using `/dev/tty.*` instead of `/dev/cu.*` | `list-ports` and `SerialReader` automatically prefer `/dev/cu.*` calling devices. |
+| **15** | **DTR/RTS reset + ROM boot text** | Bridge DTR/RTS lines drive EN/GPIO0 | `SerialReader` opens port with `dtr=False, rts=False` before opening; discards boot text until first `CSI_DATA,` line. |
+| **16** | **Brownout detector reset** | Wi-Fi current spikes (~450-500 mA) drop VDD3V3 | Firmware logs `esp_reset_reason()` at boot and warns prominently on `ESP_RST_BROWNOUT`; use powered USB hub. |
+| **17** | **CSI length vs serial bandwidth overflow** | LLTF+HTLTF (384 values) @ 100 Hz requires ~110 KB/s | Exceeds 921,600 baud max throughput (92.16 KB/s). Default to LLTF-only (128 values) at 50 Hz (~19.5 KB/s). |
+
+---
+
+## 8. Data Organization
 
 ```
 data/
-├── raw/        # Raw CSI CSV files and JSON metadata sidecars (V01_normal_*.csv, *.json)
+├── raw/        # Raw CSI CSV files and JSON metadata sidecars (csi_V01_normal_*.csv, *.json)
 ├── processed/  # Resampled and filtered timeseries datasets
 ├── reference/  # Synchronized manual tap tool ground-truth CSVs
 └── results/    # Evaluation markdown reports, CSV error metrics, and session PNG plots
@@ -285,24 +285,9 @@ data/
 
 ---
 
-## 8. Troubleshooting & Common Pitfalls
-
-| Issue | Likely Cause | Resolution |
-| :--- | :--- | :--- |
-| **No COM/tty port enumerates** | Charge-only USB cable | Replace cable with a verified 4-wire data cable. |
-| **Host freezes / dropped bytes on ESP32-S3** | Cable plugged into native USB-JTAG port | Connect to the port marked **UART** (CP2102/CH340 chip). |
-| **Zero CSI packets received** | 802.11b rate default on ESP-NOW | ESP32 Wi-Fi hardware only computes CSI on OFDM frames. TX must call `esp_now_set_peer_rate_config` with `WIFI_PHY_MODE_HT20` and `WIFI_PHY_RATE_MCS0_LGI`. |
-| **Garbled serial characters** | Baud rate mismatch | Ensure host reader is configured to `921600` baud. |
-| **OLED display is blank** | I2C pin mismatch or missing pull-ups | On ESP32-S3, verify SDA=GPIO 8, SCL=GPIO 9. Add 4.7kΩ pull-up resistors if cables exceed 15 cm. |
-| **Breathing peak suppressed or flatline** | Hampel filter clamping natural slope | Ensure `min_deviation_floor` (default 3.0) is configured in Hampel filter. |
-| **Subharmonic beats in respiration** | Windowed median filter on non-integer periods | Use linear or polynomial detrending; avoid short rolling median detrending on sine waves. |
-| **CSI callback crashes on boot** | Dynamic memory allocation in ISR context | Never call `malloc()` or `printf()` inside `csi_rx_callback`. Use FreeRTOS `xQueueSendFromISR`. |
-
----
-
 ## 9. Ethics, Privacy & Limitations
 
-1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](file:///Users/rgo75/work/wibreathe/docs/TRIAL_PROTOCOL.md), including informed written consent and full freedom to withdraw.
+1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](file:///Users/rgo75/work/wibreathe/docs/TRIAL_PROTOCOL.md), including informed written consent and freedom to withdraw.
 2. **Participant Anonymity**: Never record names or identifiable health details. Use strictly de-identified keys (`V01`, `V02`).
 3. **RF Safety**: WiBreathe operates at standard Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP), well below FCC/ICNIRP human RF exposure limits.
 4. **Multipath Sensitivity**: Performance is subject to multipath changes from other moving individuals in the room. Controlled, single-occupant experimental rooms are required.

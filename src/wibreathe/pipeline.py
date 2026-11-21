@@ -65,7 +65,7 @@ class WiBreathePipeline:
             window_size=self.config.hampel.window_size,
             n_sigmas=self.config.hampel.n_sigmas,
             min_deviation_floor=self.config.hampel.min_deviation_floor,
-            relative_floor_ratio=getattr(self.config.hampel, "relative_floor_ratio", 0.05),
+            relative_floor_ratio=getattr(self.config.hampel, "relative_floor_ratio", 0.20),
         )
         self.resampler = UniformResampler(
             target_rate_hz=self.config.resample.target_rate_hz,
@@ -84,6 +84,7 @@ class WiBreathePipeline:
             min_bpm=self.config.breathing.min_bpm,
             max_bpm=self.config.breathing.max_bpm,
             fft_zero_pad_factor=self.config.breathing.fft_zero_pad_factor,
+            min_peak_distance_sec=getattr(self.config.breathing, "min_peak_distance_sec", 1.2),
         )
         self.motion_det = MotionDetector(
             low_threshold=self.config.motion.mad_low_threshold,
@@ -104,6 +105,7 @@ class WiBreathePipeline:
         self._raw_timestamps: List[float] = []
         self._raw_subcarrier_matrices: List[List[float]] = []
         self._current_subcarrier_idx: int = 15  # Default sensitive carrier
+        self.subcarrier_sel.current_selected_idx = self._current_subcarrier_idx
         self._latest_bpm: Optional[float] = None
         self._latest_conf: float = 0.0
         self._latest_motion: float = 0.0
@@ -132,6 +134,7 @@ class WiBreathePipeline:
                     # Reset filter states when switching to avoid DC step artifact
                     self.hampel.reset()
                     self.bandpass.reset()
+                    self.resampler.reset()
 
         # Extract scalar amplitude for chosen subcarrier
         raw_amp = frame.amplitudes[self._current_subcarrier_idx]

@@ -550,7 +550,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rec.add_argument("--posture", default="supine", help="Body posture")
     p_rec.add_argument("--position", default="center", help="Bed position")
     p_rec.add_argument("--duration", type=float, help="Optional duration limit in seconds")
-    p_rec.add_argument("--consent", action="store_true", default=True, help="Affirm informed participant consent")
+    p_rec.add_argument("--consent", action="store_true", required=True, help="Affirm informed participant consent")
     p_rec.add_argument("-c", "--config", help="Configuration file path")
     p_rec.add_argument("--notes", default="", help="Observational notes")
 

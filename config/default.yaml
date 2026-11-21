@@ -24,7 +24,7 @@ filter:
   hampel_window_samples: 7
   hampel_n_sigmas: 3.0
   min_deviation_floor: null     # Relative floor used when null
-  relative_floor_ratio: 0.05    # 5% of signal robust scale/median
+  relative_floor_ratio: 0.20    # 20% of signal robust scale/median to preserve breathing waveforms
   detrend_method: "linear"      # Options: 'linear', 'mean', 'median'
   detrend_window_sec: 10.0
   bandpass_low_hz: 0.1          # 6 bpm lower bound
@@ -40,7 +40,7 @@ estimation:
   fft_zero_pad_factor: 8
   parabolic_interpolation: true
   min_peak_prominence: 0.05
-  min_peak_distance_sec: 2.0    # Limits maximum detectable rate to 30 bpm
+  min_peak_distance_sec: 1.2    # Spacing for breathing rates up to 35 bpm
   min_confidence_score: 35.0
   min_bpm: 6.0
   max_bpm: 30.0

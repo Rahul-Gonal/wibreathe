@@ -60,7 +60,7 @@ class FilterConfig:
     hampel_window_samples: int = 7
     hampel_n_sigmas: float = 3.0
     min_deviation_floor: Optional[float] = None
-    relative_floor_ratio: float = 0.05
+    relative_floor_ratio: float = 0.20
     detrend_method: str = "linear"  # linear, mean, median
     detrend_window_sec: float = 10.0
     bandpass_low_hz: float = 0.1
@@ -88,7 +88,7 @@ class EstimationConfig:
     fft_zero_pad_factor: int = 8
     parabolic_interpolation: bool = True
     min_peak_prominence: float = 0.05
-    min_peak_distance_sec: float = 2.0
+    min_peak_distance_sec: float = 1.2
     min_confidence_score: float = 35.0
     min_bpm: float = 6.0
     max_bpm: float = 30.0
@@ -166,7 +166,7 @@ class HampelFacade:
     window_size: int = 7
     n_sigmas: float = 3.0
     min_deviation_floor: Optional[float] = None
-    relative_floor_ratio: float = 0.05
+    relative_floor_ratio: float = 0.20
 
 
 @dataclass
@@ -183,6 +183,7 @@ class BreathingFacade:
     min_bpm: float = 6.0
     max_bpm: float = 30.0
     fft_zero_pad_factor: int = 8
+    min_peak_distance_sec: float = 1.2
 
 
 @dataclass
@@ -225,6 +226,7 @@ class AppConfig:
             min_bpm=self.estimation.min_bpm,
             max_bpm=self.estimation.max_bpm,
             fft_zero_pad_factor=self.estimation.fft_zero_pad_factor,
+            min_peak_distance_sec=self.estimation.min_peak_distance_sec,
         )
 
     def validate(self) -> None:

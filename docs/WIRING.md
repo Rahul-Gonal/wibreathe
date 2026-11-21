@@ -32,12 +32,11 @@ The 0.96" 4-pin I2C OLED display operates at address `0x3C` (400 kHz Fast-Mode I
 | **SDA** | **GPIO 21 (D21)** | Hardware I2C Serial Data (Pin labeled **D21** on the board silk screen) | Connect with female-female jumper wire. Internal pull-up enabled by firmware. |
 | **SCL** | **GPIO 22 (D22)** | Hardware I2C Serial Clock (Pin labeled **D22** on the board silk screen) | Connect with female-female jumper wire. Internal pull-up enabled by firmware. |
 
-#### Photo-Free Pin Pinpoint (Classic 30-Pin ESP32 DevKit V1):
-- With the ESP32 module oriented pointing **away** from you and the USB-C port at the **bottom** facing you:
-  - **Left Row**: The top-most pin is `3V3`, followed by `EN`, `VP (GPIO36)`, `VN (GPIO39)`, `D34`, `D35`, `D32`, `D33`, `D25`, `D26`, `D27`, `D14`, `D12`, `D13`, and `GND` at the bottom.
-  - **Right Row**: Starting from the top, the standard pin sequence is `D23`, `D22 (SCL)`, `TX0`, `RX0`, `D21 (SDA)`, `D19`, `D18`, `D5`, `TX2`, `RX2`, `D4`, `D2`, `D15`, `GND`, `VIN (5V)`.
-  - **Critical Note on Non-Adjacency**: Notice that **SDA (D21)** and **SCL (D22)** are **NOT adjacent** on the 30-pin DevKit V1 layout; they are separated by `TX0` and `RX0`. Never assume adjacent pins; always rely strictly on the PCB silkscreen labels (`D21` and `D22`).
-  - **OLED Pin Order Warning**: 4-pin I2C OLED display headers vary across manufacturers (e.g. `GND, VCC, SCL, SDA` vs `VCC, GND, SCL, SDA`). **Always read your OLED module's silkscreen labels carefully before powering on**. Reversing `VCC` and `GND` will destroy the OLED display controller instantly!
+#### Pin Identification & Warnings:
+- Find **D21**, **D22**, **3V3**, and **GND** by silkscreen markings on the board.
+- **D22** and **D21** are separated by **TX0** and **RX0** (they are not adjacent; always verify silkscreen labels).
+- **Never use VIN for the OLED** (use **3V3** only; connecting to VIN/5V will permanently damage the display controller).
+- OLED pin order varies by module (read its silkscreen carefully; reversing VCC/GND can destroy it).
 
 ---
 

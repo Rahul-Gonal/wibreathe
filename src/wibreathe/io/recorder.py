@@ -51,7 +51,7 @@ class RecordingMetadata:
     breathing_mode: str = "normal"          # normal, slow, fast, hold, empty, movement, bed_exit
     posture: str = "supine"                 # supine, prone, lateral_left, lateral_right, seated
     position: str = "center"                # center, left, right
-    consent_obtained: bool = True           # Must be explicitly verified
+    consent_obtained: bool = False          # Must be explicitly verified
     port: str = "unknown"
     notes: str = ""
     start_time_iso: str = ""

@@ -11,6 +11,8 @@ try:
 except ImportError:
     np = None  # type: ignore
 
+from wibreathe.dsp.bandpass import detrend_series
+
 
 @dataclass
 class BreathingEstimate:
@@ -24,7 +26,11 @@ class BreathingEstimate:
     is_valid: bool                 # True if confidence >= threshold and bed is occupied
 
 
-def _simple_fft_magnitudes(signal_in: Sequence[float], n_fft: int) -> Tuple[List[float], List[float]]:
+def _simple_fft_magnitudes(
+    signal_in: Sequence[float],
+    n_fft: int,
+    sample_rate_hz: float = 20.0,
+) -> Tuple[List[float], List[float]]:
     """Compute one-sided FFT frequency bins and magnitudes (supports numpy or pure-python fallback)."""
     n_in = len(signal_in)
     padded = list(signal_in) + [0.0] * (n_fft - n_in)
@@ -32,11 +38,10 @@ def _simple_fft_magnitudes(signal_in: Sequence[float], n_fft: int) -> Tuple[List
     if np is not None:
         fft_vals = np.fft.rfft(padded, n=n_fft)
         mags = np.abs(fft_vals).tolist()
-        freqs = (np.fft.rfftfreq(n_fft, d=1.0 / 20.0)).tolist()
+        freqs = (np.fft.rfftfreq(n_fft, d=1.0 / sample_rate_hz)).tolist()
         return freqs, mags
 
     # Pure Python DFT fallback for frequency band [0.05, 0.6] Hz
-    sample_rate_hz = 20.0
     freqs: List[float] = []
     mags: List[float] = []
     num_bins = n_fft // 2 + 1
@@ -68,7 +73,7 @@ class RespirationEstimator:
         bandpass_high_hz: float = 0.5,
         fft_pad_factor: int = 8,
         min_peak_prominence: float = 0.05,
-        min_peak_distance_sec: float = 2.0,
+        min_peak_distance_sec: float = 1.2,
         min_confidence_score: float = 35.0,
         window_duration_s: float = 30.0,
         step_duration_s: float = 1.0,
@@ -81,7 +86,10 @@ class RespirationEstimator:
         self.bandpass_high_hz = bandpass_high_hz if bandpass_high_hz > 0 else (max_bpm / 60.0)
         self.fft_pad_factor = fft_zero_pad_factor if fft_zero_pad_factor is not None else fft_pad_factor
         self.min_peak_prominence = min_peak_prominence
-        self.min_peak_distance_samples = int(round(min_peak_distance_sec * sample_rate_hz))
+        # Bound minimum peak distance so rates up to max_bpm are not dropped
+        max_period_s = 60.0 / max(1.0, max_bpm)
+        eff_peak_dist_s = min(min_peak_distance_sec, 0.65 * max_period_s)
+        self.min_peak_distance_samples = max(2, int(round(eff_peak_dist_s * sample_rate_hz)))
         self.min_confidence_score = min_confidence_score
         self.window_duration_s = window_duration_s
         self.step_duration_s = step_duration_s
@@ -123,18 +131,20 @@ class RespirationEstimator:
                 is_valid=False,
             )
 
-        # 1. Center window to prevent DC spectral leakage, then apply Hann window
-        mean_val = sum(signal_window) / n_samples
+        # 1. Linearly detrend window to prevent DC ramp spectral leakage, then apply Hann window
+        detrended = detrend_series(signal_window, method="linear")
+        mean_val = sum(detrended) / n_samples
         windowed: List[float] = []
-        for i, val in enumerate(signal_window):
+        for i, val in enumerate(detrended):
             w = 0.5 * (1.0 - math.cos(2.0 * math.pi * i / (n_samples - 1)))
             windowed.append((val - mean_val) * w)
 
         # 2. Compute zero-padded FFT
         n_fft = max(2048, 1 << (math.ceil(math.log2(n_samples * self.fft_pad_factor))))
-        freqs, mags = _simple_fft_magnitudes(windowed, n_fft)
+        freqs, mags = _simple_fft_magnitudes(windowed, n_fft, sample_rate_hz=self.sample_rate_hz)
 
         # 3. Locate dominant peak inside respiration band [0.1, 0.5] Hz
+        # Guard against band-edge falling tails: candidate must be a true local maximum
         best_k = -1
         max_mag = -1.0
         band_power = 0.0
@@ -142,9 +152,11 @@ class RespirationEstimator:
         for k, (f, mag) in enumerate(zip(freqs, mags)):
             if self.bandpass_low_hz <= f <= self.bandpass_high_hz:
                 band_power += mag**2
-                if mag > max_mag:
-                    max_mag = mag
-                    best_k = k
+                if 0 < k < len(mags) - 1:
+                    if mags[k] > mags[k - 1] and mags[k] >= mags[k + 1]:
+                        if mag > max_mag:
+                            max_mag = mag
+                            best_k = k
 
         if best_k <= 0 or best_k >= len(mags) - 1 or max_mag < 1e-6:
             return BreathingEstimate(

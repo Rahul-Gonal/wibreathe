@@ -208,6 +208,16 @@ def test_cli_eval_and_evaluate_alias():
         assert ret2 == 0
 
 
+def test_cli_record_consent_required():
+    """Verify that record command strictly requires --consent flag."""
+    import pytest
+    # Missing --consent must trigger argparse error (SystemExit != 0)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["record", "-p", "/dev/ttyUSB0", "--volunteer", "V01"])
+    assert exc_info.value.code != 0
+
+
+
 if __name__ == "__main__":
     test_cli_help()
     test_cli_list_ports()

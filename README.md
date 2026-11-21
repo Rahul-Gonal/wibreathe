@@ -274,3 +274,11 @@ data/
 3. **RF Emissions**: WiBreathe operates within standard consumer 2.4 GHz Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP). While consumer Wi-Fi transmitters comply with FCC and ICNIRP general-public RF exposure standards, bedside antennas should maintain standard separation ($\ge 20\text{ cm}$) from human occupants during continuous monitoring.
 4. **Multipath Sensitivity**: Performance is subject to multipath changes from other moving individuals in the room. Controlled, single-occupant experimental rooms are required.
 5. **No Medical Claims**: Outputs represent experimental physical channel perturbations, not clinical respiratory parameters.
+
+Contributors
+#	Name	GitHub
+1	Saket Viraj	@saket703
+2	Rahul Gonal	@Rahul-Gonal
+3	Kabeer Kooliyat	
+4	Dhruvneal Mohan	
+

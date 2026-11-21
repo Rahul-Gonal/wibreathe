@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/35210716/README.md)
 # WiBreathe: Contactless Respiration & Bed-Exit Detection Using Wi-Fi CSI on ESP32
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -275,10 +276,13 @@ data/
 4. **Multipath Sensitivity**: Performance is subject to multipath changes from other moving individuals in the room. Controlled, single-occupant experimental rooms are required.
 5. **No Medical Claims**: Outputs represent experimental physical channel perturbations, not clinical respiratory parameters.
 
-Contributors
-#	Name	GitHub
-1	Saket Viraj	@saket703
-2	Rahul Gonal	@Rahul-Gonal
-3	Kabeer Kooliyat	
-4	Dhruvneal Mohan	
+---
 
+## 10. Contributors
+
+| # | Name | GitHub |
+|---|------|--------|
+| 1 | Saket Viraj | [@saket703](https://github.com/saket703) |
+| 2 | Rahul Gonal | [@Rahul-Gonal](https://github.com/Rahul-Gonal) |
+| 3 | Kabeer Kooliyat | - |
+| 4 | Dhruvneal Mohan | - |

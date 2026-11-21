@@ -3,28 +3,87 @@
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set
 
 try:
     import numpy as np
 except ImportError:
     np = None  # type: ignore
 
+from wibreathe.dsp.bandpass import RespirationBandpass
+
+
+def compute_breathing_band_snr(
+    col: Sequence[float],
+    sample_rate_hz: float = 50.0,
+    low_cut_hz: float = 0.10,
+    high_cut_hz: float = 0.50,
+) -> float:
+    """Compute Signal-to-Noise Ratio (SNR) in the human breathing frequency band after linear detrending.
+    
+    Subcarriers with energy concentrated in the 0.10-0.50 Hz band achieve high scores.
+    Decoy subcarriers with high variance outside this band (jitter, drift, 2Hz noise)
+    produce low scores because out-of-band energy is penalized.
+    """
+    n = len(col)
+    if n < 20:
+        return 0.0
+
+    # 1. Linear detrend
+    mean_y = sum(col) / n
+    mean_x = (n - 1) / 2.0
+    s_xy = sum((i - mean_x) * (y - mean_y) for i, y in enumerate(col))
+    s_xx = n * (n * n - 1) / 12.0
+    slope = s_xy / s_xx if s_xx > 0 else 0.0
+    detrended = [y - (mean_y + slope * (i - mean_x)) for i, y in enumerate(col)]
+
+    total_var = sum(v * v for v in detrended) / n
+    if total_var < 1e-6:
+        return 0.0
+
+    # 2. Respiration bandpass filter (pure Python SOS biquad)
+    bp = RespirationBandpass(
+        sample_rate_hz=sample_rate_hz,
+        low_cut_hz=low_cut_hz,
+        high_cut_hz=high_cut_hz,
+        order=4,
+    )
+    filtered = [bp.filter_sample(v) for v in detrended]
+
+    # Skip initial filter warmup settling (first 10-15%)
+    settle = min(20, n // 5)
+    settled_filt = filtered[settle:]
+    settled_detrend = detrended[settle:]
+
+    if not settled_filt:
+        return 0.0
+
+    in_band_power = sum(v * v for v in settled_filt) / len(settled_filt)
+    out_band_power = sum((d - f) ** 2 for d, f in zip(settled_detrend, settled_filt)) / len(settled_detrend)
+
+    if out_band_power < 1e-6:
+        return in_band_power / 1e-6
+    return in_band_power / out_band_power
+
 
 class SubcarrierSelector:
-    """Handles exclusion of null/guard subcarriers, data-driven null detection, and combining."""
+    """Handles exclusion of null/guard subcarriers, breathing SNR ranking, hysteresis, and PCA combining."""
 
     def __init__(
         self,
         raw_subcarrier_count: int = 64,
         null_indices: Optional[Sequence[int]] = None,
-        method: str = "variance",
+        method: str = "snr",
         num_selected: int = 8,
         top_k: Optional[int] = None,
         layout: str = "lltf_ht20",
+        sample_rate_hz: float = 50.0,
+        hysteresis_ratio: float = 0.20,
     ):
         self.raw_subcarrier_count = raw_subcarrier_count
         self.layout = layout
+        self.sample_rate_hz = sample_rate_hz
+        self.hysteresis_ratio = hysteresis_ratio
         # UNVERIFIED on hardware: nominal subcarrier null/guard bins
         self.null_indices: Set[int] = set(
             null_indices if null_indices is not None else [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]
@@ -37,6 +96,8 @@ class SubcarrierSelector:
             i for i in range(raw_subcarrier_count) if i not in self.null_indices
         ]
         self.active_indices: List[int] = self.valid_indices[: self.num_selected]
+        self.current_selected_idx: Optional[int] = None
+        self.current_selected_score: float = 0.0
 
     @staticmethod
     def detect_null_subcarriers(
@@ -91,23 +152,49 @@ class SubcarrierSelector:
         n_steps = len(matrix)
         n_subs = len(matrix[0])
         scores: List[tuple[float, int]] = []
+        scores_map: Dict[int, float] = {}
 
         for idx in valid_candidates:
             if idx >= n_subs:
                 continue
             col = [matrix[t][idx] for t in range(n_steps)]
-            mean_val = sum(col) / n_steps
-            var_val = sum((x - mean_val) ** 2 for x in col) / max(1, n_steps - 1)
-
-            if self.method == "snr":
-                score = mean_val / (math.sqrt(var_val) + 1e-6)
+            if self.method in ("snr", "breathing_snr"):
+                score = compute_breathing_band_snr(col, sample_rate_hz=self.sample_rate_hz)
             else:
-                score = var_val
+                mean_val = sum(col) / n_steps
+                score = sum((x - mean_val) ** 2 for x in col) / max(1, n_steps - 1)
 
             scores.append((score, idx))
+            scores_map[idx] = score
 
         scores.sort(key=lambda item: item[0], reverse=True)
-        self.active_indices = [idx for _, idx in scores[: self.num_selected]]
+        if not scores:
+            return self.active_indices
+
+        best_score, best_candidate_idx = scores[0]
+
+        # Apply hysteresis: only switch away from current_selected_idx if best_candidate beats it by margin
+        if self.current_selected_idx is not None and self.current_selected_idx in scores_map:
+            current_score = scores_map[self.current_selected_idx]
+            if best_score < current_score * (1.0 + self.hysteresis_ratio):
+                # Retain current selected index
+                chosen_top = self.current_selected_idx
+            else:
+                chosen_top = best_candidate_idx
+                self.current_selected_idx = chosen_top
+                self.current_selected_score = best_score
+        else:
+            chosen_top = best_candidate_idx
+            self.current_selected_idx = chosen_top
+            self.current_selected_score = best_score
+
+        # Order active indices with chosen_top at index 0, followed by remaining top scores
+        top_list = [chosen_top]
+        for sc, idx in scores:
+            if idx != chosen_top and len(top_list) < self.num_selected:
+                top_list.append(idx)
+
+        self.active_indices = top_list
         return self.active_indices
 
     def combine_channels(

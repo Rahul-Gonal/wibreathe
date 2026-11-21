@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "nvs_flash.h"
+#include "esp_idf_version.h"
 #include "esp_mac.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -144,6 +145,12 @@ static void parse_mac_filter(void)
     }
 #endif
     s_has_mac_filter = false;
+    /* UNVERIFIED: Loud boot warning when FILTER_MAC is empty */
+    ESP_LOGW(TAG, "****************************************************************");
+    ESP_LOGW(TAG, "* WARNING: No transmitter MAC filter set (FILTER_MAC is empty)!*");
+    ESP_LOGW(TAG, "* Receiver will capture CSI from ALL nearby 802.11n transmitters*");
+    ESP_LOGW(TAG, "* Set CONFIG_WIBREATHE_FILTER_MAC to lock to your csi_tx node! *");
+    ESP_LOGW(TAG, "****************************************************************");
 }
 
 /*
@@ -161,13 +168,33 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info)
         return;
     }
 
-    csi_item_t item;
     const wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
 
-    /* Extract sequence ID if embedded in payload, else use counter */
-    if (info->payload && info->len >= 19) {
-        item.rx_id = *(uint32_t *)(info->payload + 4);
-    } else {
+    /* UNVERIFIED: Optional drop of non-HT frames (sig_mode != 1) */
+#if defined(CONFIG_WIBREATHE_ONLY_HT_FRAMES)
+    if (rx_ctrl->sig_mode != 1) {
+        return;
+    }
+#endif
+
+    csi_item_t item;
+
+    /* UNVERIFIED: Scan info->payload for 4-byte magic "WIBR", read following uint32 sequence */
+    bool seq_found = false;
+#if defined(ESP_IDF_VERSION) && defined(ESP_IDF_VERSION_VAL)
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+    if (info->payload && info->payload_len >= 8) {
+        for (int i = 0; i <= (int)info->payload_len - 8; i++) {
+            if (memcmp(info->payload + i, "WIBR", 4) == 0) {
+                memcpy(&item.rx_id, info->payload + i + 4, sizeof(uint32_t));
+                seq_found = true;
+                break;
+            }
+        }
+    }
+#endif
+#endif
+    if (!seq_found) {
         item.rx_id = s_csi_frames_total;
     }
 
@@ -190,7 +217,8 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info)
     item.timestamp = rx_ctrl->timestamp;
     item.ant = rx_ctrl->ant;
     item.sig_len = rx_ctrl->sig_len;
-    item.rx_state = rx_ctrl->sig_mode;
+    /* UNVERIFIED: Set rx_state from rx_ctrl->rx_state, not sig_mode */
+    item.rx_state = rx_ctrl->rx_state;
     item.first_word_invalid = info->first_word_invalid;
 
     uint16_t copy_len = info->len < CSI_MAX_BUF_LEN ? info->len : CSI_MAX_BUF_LEN;

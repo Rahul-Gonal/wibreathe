@@ -206,7 +206,7 @@ src/wibreathe/
 
 ## 5. Communication Protocols
 
-See [docs/PROTOCOL.md](file:///Users/rgo75/work/wibreathe/docs/PROTOCOL.md) for full specifications.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for full specifications.
 
 ### 5.1 Upstream CSI Packet Format (`csi_rx` $\to$ Host)
 A 25-column comma-separated ASCII string terminated with `\n`:
@@ -230,8 +230,8 @@ DISP,<state>,<bpm or -->,<conf 0-100>,<seq>\n
 
 | CSI Configuration | Values (`len`) | Subcarriers | Avg Line Length | 25 Hz | 50 Hz (Default) | 100 Hz | 921.6k Bus Load @ 50 Hz |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **LLTF Only** (Classic ESP32) | **128** | 64 | **~390 bytes** | 9.75 KB/s | **19.5 KB/s** | 39.0 KB/s | **21.2% (SAFE)** |
-| **LLTF + HT-LTF** | **384** | 64 x 3 | **~1,100 bytes** | 27.5 KB/s | **55.0 KB/s** | **110.0 KB/s (OVERFLOW)** | **59.7%** |
+| **LLTF Only** (Classic ESP32) | **128** | 64 | **~540 bytes** | 13.5 KB/s | **27.0 KB/s** | 54.0 KB/s | **29.3% (SAFE)** |
+| **LLTF + HT-LTF** | **384** | 64 x 3 | **~1,450 bytes** | 36.2 KB/s | **72.5 KB/s** | **145.0 KB/s (OVERFLOW)** | **78.7%** |
 
 ---
 
@@ -239,12 +239,12 @@ DISP,<state>,<bpm or -->,<conf 0-100>,<seq>\n
 
 ### 6.1 Host Python Environment (macOS & Windows)
 
-WiBreathe supports Python 3.10 to 3.14. Always use an isolated virtual environment.
+WiBreathe supports Python 3.10 to 3.14 (Python 3.12 or 3.13 recommended). Always use an isolated virtual environment.
 
 #### On macOS (Terminal):
 ```bash
 # 1. Clone repository
-git clone https://github.com/mugglelabs/wibreathe.git
+git clone https://github.com/Rahul-Gonal/wibreathe.git
 cd wibreathe
 
 # 2. Create virtual environment
@@ -256,14 +256,14 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 
-# 4. Verify test suite (40 tests should pass)
+# 4. Verify test suite (all tests should pass)
 pytest -q
 ```
 
 #### On Windows (PowerShell):
 ```powershell
 # 1. Clone repository
-git clone https://github.com/mugglelabs/wibreathe.git
+git clone https://github.com/Rahul-Gonal/wibreathe.git
 cd wibreathe
 
 # 2. Create virtual environment
@@ -284,9 +284,10 @@ pytest -q
 ### 6.2 ESP-IDF v5.x Toolchain Setup
 
 #### On macOS:
-1. Locate your ESP-IDF directory (installed via the Espressif Installation Manager):
+1. Locate your ESP-IDF directory (installed via the Espressif Installation Manager or manual git clone):
    ```bash
-   cd /Users/rgo75/.espressif/v5.5.6/esp-idf
+   cd ~/.espressif/v5.5.6/esp-idf
+   # Or: cd ~/esp/esp-idf
    ```
 2. Initialize tools and Python environment for target `esp32`:
    ```bash
@@ -305,6 +306,9 @@ pytest -q
 #### On Windows (PowerShell):
 1. In an ESP-IDF PowerShell prompt (opened from Start Menu or via script):
    ```powershell
+   # If script execution is restricted:
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
    . $HOME\esp\esp-idf\export.ps1
    idf.py --version
    ```
@@ -316,7 +320,7 @@ pytest -q
 #### 1. Receiver Node (`firmware/csi_rx`)
 Plug the board with the OLED display attached into your computer via USB-C:
 ```bash
-cd /Users/rgo75/work/wibreathe/firmware/csi_rx
+cd firmware/csi_rx
 
 # Target classic ESP32
 idf.py set-target esp32
@@ -335,7 +339,7 @@ idf.py -p /dev/cu.usbserial-0001 -b 921600 flash monitor
 #### 2. Transmitter Node (`firmware/csi_tx`)
 Unplug the receiver, plug in the second ESP32 board:
 ```bash
-cd /Users/rgo75/work/wibreathe/firmware/csi_tx
+cd ../csi_tx
 
 # Target classic ESP32
 idf.py set-target esp32
@@ -413,14 +417,14 @@ All commands are invoked via `python -m wibreathe <subcommand>`:
 | **14** | **macOS terminal blocks on serial open** | Using `/dev/tty.*` instead of `/dev/cu.*` | `list-ports` and `SerialReader` automatically prefer non-blocking `/dev/cu.*` calling devices. |
 | **15** | **DTR/RTS reset + ROM boot text** | Bridge DTR/RTS lines drive EN/GPIO0 | `SerialReader` opens port with `dtr=False, rts=False` before opening; discards boot text until first `CSI_DATA,` line. |
 | **16** | **Brownout detector reset** | Wi-Fi current spikes (~450-500 mA) drop VDD3V3 | Firmware logs `esp_reset_reason()` at boot and warns prominently on `ESP_RST_BROWNOUT`; use powered USB hub. |
-| **17** | **CSI length vs serial bandwidth overflow** | LLTF+HTLTF (384 values) @ 100 Hz requires ~110 KB/s | Exceeds 921,600 baud max throughput (92.16 KB/s). Default to LLTF-only (128 values) at 50 Hz (~19.5 KB/s). |
+| **17** | **CSI length vs serial bandwidth overflow** | LLTF+HTLTF (384 values) @ 100 Hz requires ~145 KB/s | Exceeds 921,600 baud max throughput (92.16 KB/s). Default to LLTF-only (128 values) at 50 Hz (~27.0 KB/s). |
 
 ---
 
 ## 9. Ethics, Privacy & Regulatory Boundaries
 
-1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](file:///Users/rgo75/work/wibreathe/docs/TRIAL_PROTOCOL.md), including informed written consent and full freedom to withdraw.
+1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](docs/TRIAL_PROTOCOL.md), including informed written consent and full freedom to withdraw.
 2. **Participant Anonymity**: Never record names or identifiable health details. Use strictly de-identified keys (`V01`, `V02`).
-3. **RF Safety**: WiBreathe operates at standard Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP), well below FCC/ICNIRP human RF exposure limits.
+3. **RF Emissions**: WiBreathe operates within standard consumer 2.4 GHz Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP). While consumer Wi-Fi transmitters comply with FCC and ICNIRP general-public RF exposure standards, bedside antennas should maintain standard separation ($\ge 20\text{ cm}$) from human occupants during continuous monitoring.
 4. **Multipath Sensitivity**: Performance is subject to multipath changes from other moving individuals in the room. Controlled, single-occupant experimental rooms are required.
 5. **Academic Scope**: Outputs represent experimental physical channel perturbations, not clinical respiratory parameters.

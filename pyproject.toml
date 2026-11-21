@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Mugglelabs Team", email = "wibreathe-project@mugglelabs.internal"}
+    {name = "Rahul Gonal and team", email = "rahulrocks75gonal@gmail.com"}
 ]
 keywords = ["esp32", "csi", "wifi-sensing", "respiration", "bed-exit", "signal-processing"]
 classifiers = [

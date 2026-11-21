@@ -86,7 +86,7 @@ This checklist guides engineering teams through bringing up new classic **ESP32 
 
 ## Step 3: Build & Flash Receiver Node (`firmware/csi_rx`)
 
-- [ ] Wire the 0.96" I2C OLED display to the classic ESP32 RX node ([docs/WIRING.md](file:///Users/rgo75/work/wibreathe/docs/WIRING.md)):
+- [ ] Wire the 0.96" I2C OLED display to the classic ESP32 RX node ([docs/WIRING.md](WIRING.md)):
   - `GND` -> `GND`
   - `VCC` -> **3V3** (Never connect to VIN/5V!)
   - `SDA` -> **GPIO 21 (D21)**

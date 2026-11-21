@@ -3,15 +3,22 @@ menu "WiBreathe CSI Receiver Configuration"
     config WIBREATHE_RX_CHANNEL
         int "Wi-Fi Reception Channel"
         default 6
-        range 1 13
+        range 1 11
         help
-            Channel to listen on. Must match transmitter channel.
+            Channel to listen on. Must match transmitter channel (standard 2.4 GHz channels 1-11).
 
     config WIBREATHE_FILTER_MAC
         string "Filter by Transmitter MAC Address"
         default ""
         help
             Format: AA:BB:CC:DD:EE:FF. Leave blank to accept packets from all transmitters.
+
+    config WIBREATHE_ONLY_HT_FRAMES
+        bool "Drop non-HT frames (sig_mode != 1)"
+        default y
+        help
+            Filter out legacy non-HT OFDM and 802.11b frames. Only HT20 frames (sig_mode == 1)
+            produce valid CSI on ESP32 hardware.
 
     config WIBREATHE_SERIAL_BAUD
         int "UART CSI Stream Baud Rate"
@@ -78,6 +85,13 @@ menu "WiBreathe CSI Receiver Configuration"
         default 0x3C
         help
             I2C 7-bit slave address of OLED module (typically 0x3C or 0x3D).
+
+    config WIBREATHE_OLED_I2C_FREQ_HZ
+        int "OLED I2C Bus Frequency (Hz)"
+        default 100000
+        depends on WIBREATHE_OLED_ENABLE
+        help
+            I2C master clock speed in Hz (default 100000 for 100 kHz standard mode).
 
     config WIBREATHE_NO_LINK_TIMEOUT_SEC
         int "Display 'No Link' Timeout (seconds)"

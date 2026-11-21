@@ -2,6 +2,9 @@
 # UNVERIFIED: This workflow has not been executed on GitHub Actions runners yet.
 name: Tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ main, master ]

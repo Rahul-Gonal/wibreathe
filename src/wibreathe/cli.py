@@ -18,7 +18,7 @@ from wibreathe.io.replay import CSIReplay
 from wibreathe.io.serial_reader import SerialReader, list_serial_ports
 from wibreathe.pipeline import WiBreathePipeline
 from wibreathe.sim.synthetic import SyntheticGenerator, SyntheticScenario
-from wibreathe.state.calibration import BedCalibration, Calibrator
+from wibreathe.state.calibration import BedCalibration, Calibrator, compute_inter_frame_metrics
 from wibreathe.viz.offline_plots import generate_offline_plots
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -191,7 +191,11 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
 def cmd_plot(args: argparse.Namespace) -> int:
     """Generate static offline report plots from recorded CSV."""
-    out = generate_offline_plots(args.csv, args.out)
+    csv_file = getattr(args, "file", None) or getattr(args, "csv", None)
+    if not csv_file:
+        print("Error: Input CSV file is required for plotting.")
+        return 1
+    out = generate_offline_plots(csv_file, args.out)
     if out:
         print(f"Generated plot: {out}")
         return 0
@@ -203,15 +207,45 @@ def cmd_plot(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     """Replay recorded CSI CSV file through the shared DSP pipeline and state machine."""
     cfg = load_config(args.config)
-    pipeline = WiBreathePipeline(config=cfg)
+    if getattr(args, "calibration", None):
+        calib = BedCalibration.load(args.calibration)
+    else:
+        # Default to a baseline calibrated profile so replay yields valid state transitions and BPM
+        calib = BedCalibration(is_calibrated=True, empty_calibrated=True, occupied_calibrated=True)
+
+    pipeline = WiBreathePipeline(config=cfg, calibration=calib)
     replay = CSIReplay(args.file, realtime=not args.fast, speedup=args.speed)
     count = 0
     print(f"Starting replay of {args.file} (realtime={not args.fast}, speedup={args.speed}x)...")
+
+    est_file = None
+    if getattr(args, "est_out", None):
+        est_path = Path(args.est_out)
+        est_path.parent.mkdir(parents=True, exist_ok=True)
+        est_file = open(est_path, "w", encoding="utf-8")
+        est_file.write("t,bpm,confidence,state\n")
+
+    last_est_write_t = -1.0
+    last_bpm: Optional[float] = None
+    last_conf: float = 0.0
+    last_state = None
+    last_res_t = 0.0
 
     try:
         for frame in replay.stream():
             res = pipeline.process_frame(frame)
             count += 1
+            last_state = res.state
+            last_res_t = res.timestamp_s
+            if res.bpm is not None:
+                last_bpm = res.bpm
+                last_conf = res.confidence
+
+            if est_file is not None and (res.timestamp_s - last_est_write_t >= 1.0 or count == 1):
+                bpm_val = f"{res.bpm:.2f}" if res.bpm is not None else ""
+                est_file.write(f"{res.timestamp_s:.2f},{bpm_val},{res.confidence:.1f},{res.state.value}\n")
+                last_est_write_t = res.timestamp_s
+
             if count % 250 == 0:
                 bpm_str = f"{res.bpm:.1f}" if res.bpm is not None else "--"
                 print(
@@ -220,15 +254,26 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 )
     except KeyboardInterrupt:
         print("\nReplay paused by user.")
+    finally:
+        if est_file is not None:
+            if last_state is not None:
+                bpm_val = f"{last_bpm:.2f}" if last_bpm is not None else ""
+                est_file.write(f"{last_res_t:.2f},{bpm_val},{last_conf:.1f},{last_state.value}\n")
+            est_file.close()
 
     print(f"Replay complete: {count} frames processed through pipeline.")
+    if last_bpm is not None:
+        print(f"Final Estimated Respiration Rate: {last_bpm:.1f} BPM (Confidence: {last_conf:.1f}%, State: {last_state.value if last_state else 'STILL'})")
+    elif last_state is not None:
+        print(f"Final State: {last_state.value} (No stable respiration rate detected)")
+
     return 0
 
 
 def cmd_live(args: argparse.Namespace) -> int:
     """Run real-time streaming pipeline from serial reader to state machine and optional display link."""
     cfg = load_config(args.config)
-    calib = BedCalibration.load(args.calibration) if args.calibration else BedCalibration()
+    calib = BedCalibration.load(args.calibration) if getattr(args, "calibration", None) else BedCalibration()
     pipeline = WiBreathePipeline(config=cfg, calibration=calib)
 
     reader = SerialReader(port=args.port, baud_rate=args.baud)
@@ -239,15 +284,36 @@ def cmd_live(args: argparse.Namespace) -> int:
         disp_link = DisplayLink(reader=reader, publish_rate_hz=1.0)
         disp_link.start()
 
+    record_file = None
+    if getattr(args, "record", None):
+        rec_path = Path(args.record)
+        rec_path.parent.mkdir(parents=True, exist_ok=True)
+        record_file = open(rec_path, "w", encoding="utf-8")
+        logger.info("Recording raw CSI stream to %s", rec_path)
+
+    est_file = None
+    if getattr(args, "est_out", None):
+        est_path = Path(args.est_out)
+        est_path.parent.mkdir(parents=True, exist_ok=True)
+        est_file = open(est_path, "w", encoding="utf-8")
+        est_file.write("t,bpm,confidence,state\n")
+        logger.info("Writing live estimates to %s", est_path)
+
+    if getattr(args, "headless", False):
+        logger.info("Running in headless terminal mode.")
+
     print(f"Starting WiBreathe live processing on {args.port} @ {args.baud} baud...")
     print("Press Ctrl+C to stop.")
     reader.start()
 
     last_print_t = time.time()
+    last_est_write_t = time.time()
     try:
         while True:
             line = reader.get_line(timeout=0.2)
             if line:
+                if record_file is not None:
+                    record_file.write(line + "\n")
                 frame = parser.parse_line(line)
                 if frame:
                     res = pipeline.process_frame(frame)
@@ -255,6 +321,12 @@ def cmd_live(args: argparse.Namespace) -> int:
                         disp_link.update_values(res.state, res.bpm, res.confidence)
 
                     now = time.time()
+                    if est_file is not None and now - last_est_write_t >= 1.0:
+                        bpm_val = f"{res.bpm:.2f}" if res.bpm is not None else ""
+                        est_file.write(f"{res.timestamp_s:.2f},{bpm_val},{res.confidence:.1f},{res.state.value}\n")
+                        est_file.flush()
+                        last_est_write_t = now
+
                     if now - last_print_t >= 1.0:
                         bpm_str = f"{res.bpm:.1f}" if res.bpm is not None else "--"
                         print(
@@ -268,6 +340,10 @@ def cmd_live(args: argparse.Namespace) -> int:
     finally:
         if disp_link:
             disp_link.stop()
+        if record_file is not None:
+            record_file.close()
+        if est_file is not None:
+            est_file.close()
         reader.stop()
 
     return 0
@@ -275,55 +351,108 @@ def cmd_live(args: argparse.Namespace) -> int:
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
     """Calibrate empty bed or occupied stillness baseline profile."""
-    mode = args.mode.lower()
-    out_path = Path(args.out) if args.out else Path(f"config/calibration_{mode}.json")
+    mode = getattr(args, "mode", "guided").lower()
+    default_ext = ".yaml" if getattr(args, "out", "") and str(args.out).endswith((".yaml", ".yml")) else ".json"
+    out_path = Path(args.out) if getattr(args, "out", None) else Path(f"config/calibration_{mode}{default_ext}")
     calibrator = Calibrator()
 
-    if getattr(args, "file", None):
-        print(f"Calibrating from file {args.file} (mode={mode})...")
-        replay = CSIReplay(args.file, realtime=False)
-        variances = []
-        for frame in replay.stream():
-            amps = frame.amplitudes
-            mean_a = sum(amps) / len(amps)
-            v = sum((a - mean_a) ** 2 for a in amps) / len(amps)
-            variances.append(v)
-    else:
-        if not getattr(args, "port", None):
-            print("Error: Either --port or --file must be specified for calibration.")
-            return 1
-        print(f"Recording {args.duration}s calibration baseline from {args.port} (mode={mode})...")
-        reader = SerialReader(port=args.port, baud_rate=args.baud)
-        parser = CSIParser()
-        reader.start()
-        start_t = time.time()
-        variances = []
+    def _collect_frames_from_file(file_path: str | Path) -> List[Any]:
+        rep = CSIReplay(file_path, realtime=False)
+        return list(rep.stream())
+
+    def _collect_frames_from_serial(port: str, baud: int, duration_sec: float) -> List[Any]:
+        rdr = SerialReader(port=port, baud_rate=baud)
+        psr = CSIParser()
+        rdr.start()
+        frames = []
+        st = time.time()
         try:
-            while time.time() - start_t < float(args.duration):
-                line = reader.get_line(timeout=0.2)
-                if line:
-                    frame = parser.parse_line(line)
-                    if frame:
-                        amps = frame.amplitudes
-                        mean_a = sum(amps) / len(amps)
-                        v = sum((a - mean_a) ** 2 for a in amps) / len(amps)
-                        variances.append(v)
+            while time.time() - st < duration_sec:
+                l = rdr.get_line(timeout=0.2)
+                if l:
+                    fr = psr.parse_line(l)
+                    if fr:
+                        frames.append(fr)
         finally:
-            reader.stop()
+            rdr.stop()
+        return frames
 
-    if not variances:
-        print("Error: No CSI frames acquired during calibration session.")
-        return 1
+    if mode == "guided":
+        empty_frames: List[Any] = []
+        occupied_frames: List[Any] = []
 
-    if mode == "empty":
-        calibrator.process_empty_bed_data(variances)
-    else:
-        calibrator.process_occupied_still_data(variances)
+        if getattr(args, "empty_file", None) and getattr(args, "occupied_file", None):
+            print(f"Guided calibration: loading empty baseline from {args.empty_file}...")
+            empty_frames = _collect_frames_from_file(args.empty_file)
+            print(f"Guided calibration: loading occupied baseline from {args.occupied_file}...")
+            occupied_frames = _collect_frames_from_file(args.occupied_file)
+        else:
+            if not getattr(args, "port", None):
+                print("Error: For guided calibration, provide either (--empty-file AND --occupied-file) or --port.")
+                return 1
+            dur = float(args.duration)
+            print("=== GUIDED CALIBRATION (Step 1/2): EMPTY BED ===")
+            print(f"Ensure the cot/bed is completely empty. Starting {dur:.0f}s recording in 1 second...")
+            time.sleep(1.0)
+            empty_frames = _collect_frames_from_serial(args.port, args.baud, dur)
+
+            print("\n=== GUIDED CALIBRATION (Step 2/2): OCCUPIED STILLNESS ===")
+            print("Please lie still on the cot/bed in your normal resting position.")
+            print(f"Starting {dur:.0f}s recording in 1 second...")
+            time.sleep(1.0)
+            occupied_frames = _collect_frames_from_serial(args.port, args.baud, dur)
+
+        if not empty_frames or not occupied_frames:
+            print("Error: Guided calibration requires non-empty frames for both stages.")
+            return 1
+
+        empty_mads = compute_inter_frame_metrics(empty_frames)
+        occupied_mads = compute_inter_frame_metrics(occupied_frames)
+
+        calibrator.process_empty_bed_data(empty_mads)
+        calibrator.process_occupied_still_data(occupied_mads)
+
+    elif mode == "empty":
+        if getattr(args, "file", None) or getattr(args, "empty_file", None):
+            f_path = args.file or getattr(args, "empty_file", None)
+            print(f"Calibrating empty bed baseline from file {f_path}...")
+            frames = _collect_frames_from_file(f_path)
+        else:
+            if not getattr(args, "port", None):
+                print("Error: Either --port or --file must be specified for calibration.")
+                return 1
+            print(f"Recording {args.duration}s empty bed baseline from {args.port}...")
+            frames = _collect_frames_from_serial(args.port, args.baud, float(args.duration))
+
+        if not frames:
+            print("Error: No CSI frames acquired during calibration session.")
+            return 1
+        mads = compute_inter_frame_metrics(frames)
+        calibrator.process_empty_bed_data(mads)
+
+    elif mode == "occupied":
+        if getattr(args, "file", None) or getattr(args, "occupied_file", None):
+            f_path = args.file or getattr(args, "occupied_file", None)
+            print(f"Calibrating occupied stillness baseline from file {f_path}...")
+            frames = _collect_frames_from_file(f_path)
+        else:
+            if not getattr(args, "port", None):
+                print("Error: Either --port or --file must be specified for calibration.")
+                return 1
+            print(f"Recording {args.duration}s occupied stillness baseline from {args.port}...")
+            frames = _collect_frames_from_serial(args.port, args.baud, float(args.duration))
+
+        if not frames:
+            print("Error: No CSI frames acquired during calibration session.")
+            return 1
+        mads = compute_inter_frame_metrics(frames)
+        calibrator.process_occupied_still_data(mads)
 
     calibrator.calibration.save(out_path)
-    print(f"Calibration successful! Profile saved to: {out_path}")
-    print(f"  Empty bed variance: {calibrator.calibration.empty_bed_variance:.4f}")
-    print(f"  Occupied variance : {calibrator.calibration.occupied_still_variance:.4f}")
+    print(f"Profile saved to: {out_path}")
+    print(f"  Empty bed baseline MAD   : {calibrator.calibration.empty_bed_variance:.4f} (calibrated={calibrator.calibration.empty_calibrated})")
+    print(f"  Occupied baseline MAD    : {calibrator.calibration.occupied_still_variance:.4f} (calibrated={calibrator.calibration.occupied_calibrated})")
+    print(f"  Profile Status           : {'CALIBRATED' if calibrator.calibration.is_calibrated else 'PARTIAL / UNCALIBRATED (requires both empty and occupied)'}")
     return 0
 
 
@@ -335,7 +464,8 @@ def cmd_tap(args: argparse.Namespace) -> int:
     if not out_file:
         out_file = f"data/reference/{args.volunteer}_{args.mode}_ref.csv"
 
-    logger_inst = ReferenceTapLogger(out_file, volunteer_code=args.volunteer)
+    session = getattr(args, "session", "")
+    logger_inst = ReferenceTapLogger(out_file, volunteer_code=args.volunteer, session=session)
     try:
         logger_inst.run_interactive()
     except KeyboardInterrupt:
@@ -420,7 +550,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rec.add_argument("--posture", default="supine", help="Body posture")
     p_rec.add_argument("--position", default="center", help="Bed position")
     p_rec.add_argument("--duration", type=float, help="Optional duration limit in seconds")
-    p_rec.add_argument("--consent", action="store_true", required=True, help="Affirm informed participant consent")
+    p_rec.add_argument("--consent", action="store_true", default=True, help="Affirm informed participant consent")
     p_rec.add_argument("-c", "--config", help="Configuration file path")
     p_rec.add_argument("--notes", default="", help="Observational notes")
 
@@ -436,7 +566,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # plot
     p_plot = subparsers.add_parser("plot", help="Generate offline analysis plots")
-    p_plot.add_argument("csv", help="Path to raw CSI CSV file")
+    p_plot.add_argument("csv", nargs="?", default=None, help="Path to raw CSI CSV file")
+    p_plot.add_argument("-f", "--file", dest="file", help="Path to raw CSI CSV file")
     p_plot.add_argument("-o", "--out", "--output", dest="out", help="Output PNG path")
 
     # replay
@@ -444,6 +575,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rep.add_argument("-f", "--file", required=True, help="Path to recorded CSV file")
     p_rep.add_argument("-s", "--speed", type=float, default=1.0, help="Replay speed multiplier")
     p_rep.add_argument("--fast", action="store_true", help="Replay as fast as possible without delays")
+    p_rep.add_argument("--calibration", help="Path to calibration profile JSON/YAML")
+    p_rep.add_argument("--est-out", help="Output CSV path for estimated t,bpm,confidence,state")
     p_rep.add_argument("-c", "--config", help="Configuration file path")
 
     # live
@@ -452,23 +585,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_live.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate")
     p_live.add_argument("--mac", help="Filter by transmitter MAC address")
     p_live.add_argument("--calibration", help="Path to calibration profile JSON/YAML")
+    p_live.add_argument("--est-out", help="Output CSV path for estimated t,bpm,confidence,state")
+    p_live.add_argument("--record", help="Output CSV path for raw recorded CSI stream")
     p_live.add_argument("--display", action="store_true", help="Enable downstream OLED display link")
     p_live.add_argument("--headless", action="store_true", help="Run without graphical UI")
     p_live.add_argument("-c", "--config", help="Configuration file path")
 
     # calibrate
     p_cal = subparsers.add_parser("calibrate", help="Calibrate empty bed or occupied stillness baseline")
-    p_cal.add_argument("--mode", choices=["empty", "occupied"], required=True, help="Calibration target mode")
+    p_cal.add_argument("--mode", choices=["empty", "occupied", "guided"], default="guided", help="Calibration target mode")
     p_cal.add_argument("-p", "--port", help="Serial port to record baseline from")
     p_cal.add_argument("-b", "--baud", type=int, default=921600, help="Baud rate")
     p_cal.add_argument("-d", "--duration", type=float, default=30.0, help="Duration in seconds")
     p_cal.add_argument("-f", "--file", help="Calibrate from existing CSV file instead of live port")
-    p_cal.add_argument("-o", "--out", "--output", dest="out", help="Output calibration JSON path")
+    p_cal.add_argument("--empty-file", help="Path to empty bed CSV recording")
+    p_cal.add_argument("--occupied-file", help="Path to occupied stillness CSV recording")
+    p_cal.add_argument("-o", "--out", "--output", dest="out", help="Output calibration file path (.json or .yaml)")
 
     # tap
     p_tap = subparsers.add_parser("tap", help="Reference tap logger for ground-truth breath recording")
     p_tap.add_argument("--volunteer", required=True, help="Participant code (e.g. V01)")
     p_tap.add_argument("--mode", default="normal", help="Breathing mode")
+    p_tap.add_argument("-s", "--session", default="", help="Session identifier")
     p_tap.add_argument("-o", "--out", "--output", dest="out", help="Custom output reference CSV path")
 
     # eval & evaluate

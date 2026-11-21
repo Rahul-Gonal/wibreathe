@@ -58,6 +58,8 @@ class WiBreathePipeline:
             null_indices=self.config.subcarriers.null_indices,
             method=self.config.subcarriers.selection_method,
             top_k=self.config.subcarriers.top_k,
+            sample_rate_hz=50.0,
+            hysteresis_ratio=0.20,
         )
         self.hampel = HampelFilter(
             window_size=self.config.hampel.window_size,
@@ -123,7 +125,13 @@ class WiBreathePipeline:
         if len(self._raw_subcarrier_matrices) >= 250 and len(self._raw_subcarrier_matrices) % 250 == 0:
             top_indices = self.subcarrier_sel.select_top_k(self._raw_subcarrier_matrices[-250:])
             if top_indices:
-                self._current_subcarrier_idx = top_indices[0]
+                new_idx = top_indices[0]
+                if new_idx != self._current_subcarrier_idx:
+                    logger.info("Switching active subcarrier: %d -> %d", self._current_subcarrier_idx, new_idx)
+                    self._current_subcarrier_idx = new_idx
+                    # Reset filter states when switching to avoid DC step artifact
+                    self.hampel.reset()
+                    self.bandpass.reset()
 
         # Extract scalar amplitude for chosen subcarrier
         raw_amp = frame.amplitudes[self._current_subcarrier_idx]
@@ -160,10 +168,17 @@ class WiBreathePipeline:
             bpm_confidence=self._latest_conf,
         )
 
+        # In STILL, or if confidence >= 25% during streaming replay, report BPM
+        report_bpm = (
+            self._latest_bpm
+            if (state == SystemState.STILL or (state != SystemState.NO_DATA and self._latest_conf >= 25.0))
+            else None
+        )
+
         return PipelineResult(
             timestamp_s=t_s,
             state=state,
-            bpm=self._latest_bpm if state == SystemState.STILL else None,
+            bpm=report_bpm,
             confidence=self._latest_conf,
             motion_metric=self._latest_motion,
             selected_subcarrier_idx=self._current_subcarrier_idx,

@@ -35,7 +35,9 @@ The 0.96" 4-pin I2C OLED display operates at address `0x3C` (400 kHz Fast-Mode I
 #### Photo-Free Pin Pinpoint (Classic 30-Pin ESP32 DevKit V1):
 - With the ESP32 module oriented pointing **away** from you and the USB-C port at the **bottom** facing you:
   - **Left Row**: The top-most pin is `3V3`, followed by `EN`, `VP (GPIO36)`, `VN (GPIO39)`, `D34`, `D35`, `D32`, `D33`, `D25`, `D26`, `D27`, `D14`, `D12`, `D13`, and `GND` at the bottom.
-  - **Right Row**: **D21 (SDA)** is typically the 3rd pin from the bottom on the right side. **D22 (SCL)** is adjacent to **D21** (or 2nd pin from the bottom, depending on whether `D23` or `GND` is at the corner). Always locate the silkscreen markings **D21** and **D22**.
+  - **Right Row**: Starting from the top, the standard pin sequence is `D23`, `D22 (SCL)`, `TX0`, `RX0`, `D21 (SDA)`, `D19`, `D18`, `D5`, `TX2`, `RX2`, `D4`, `D2`, `D15`, `GND`, `VIN (5V)`.
+  - **Critical Note on Non-Adjacency**: Notice that **SDA (D21)** and **SCL (D22)** are **NOT adjacent** on the 30-pin DevKit V1 layout; they are separated by `TX0` and `RX0`. Never assume adjacent pins; always rely strictly on the PCB silkscreen labels (`D21` and `D22`).
+  - **OLED Pin Order Warning**: 4-pin I2C OLED display headers vary across manufacturers (e.g. `GND, VCC, SCL, SDA` vs `VCC, GND, SCL, SDA`). **Always read your OLED module's silkscreen labels carefully before powering on**. Reversing `VCC` and `GND` will destroy the OLED display controller instantly!
 
 ---
 

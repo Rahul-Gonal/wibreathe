@@ -41,7 +41,7 @@ class SubcarrierConfig:
     null_indices: List[int] = field(
         default_factory=lambda: [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]
     )
-    selection_method: str = "variance"  # variance, snr, pca, mean
+    selection_method: str = "snr"  # variance, snr, pca, mean
     num_selected: int = 8
     top_k: int = 8
 

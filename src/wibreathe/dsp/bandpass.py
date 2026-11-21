@@ -90,6 +90,10 @@ class RespirationBandpass:
                 stage[0] = 0.0
                 stage[1] = 0.0
 
+    def reset(self) -> None:
+        """Reset internal causal filter delays (alias for reset_state)."""
+        self.reset_state()
+
     def filter_sample(self, val: float) -> float:
         """Apply causal SOS biquad cascade to a single sample."""
         if self.sos is None or self._zi is None:
@@ -159,12 +163,17 @@ def detrend_series(values: Sequence[float], method: str = "linear") -> List[floa
     return list(values)
 
 
-def detrend_median(values: Sequence[float], window_size: int = 41) -> List[float]:
+def detrend_median(
+    values: Sequence[float],
+    window_size: int = 41,
+    window_samples: Optional[int] = None,
+) -> List[float]:
     """Moving-median baseline subtraction."""
     n = len(values)
     if n == 0:
         return []
-    radius = window_size // 2
+    win = window_samples if window_samples is not None else window_size
+    radius = win // 2
     detrended: List[float] = []
 
     for i in range(n):

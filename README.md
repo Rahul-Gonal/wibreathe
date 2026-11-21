@@ -44,13 +44,13 @@ Connect the OLED display to the receiver board:
 
 ## 3. Host Software Setup (macOS, Windows, and Linux)
 
-WiBreathe supports Python **3.10 to 3.14** across macOS, Windows, and Linux equally. Always work inside a virtual environment.
+WiBreathe supports Python **3.10 to 3.14** across macOS, Windows, and Linux equally (**Python 3.12 or 3.13 is recommended** for optimal scientific wheel and C-extension compatibility). Always work inside a dedicated virtual environment.
 
 ### 3.1 Environment Activation & Installation
 
 #### On macOS and Linux:
 ```bash
-# Create virtual environment
+# Create virtual environment (Python 3.12/3.13 recommended)
 python3 -m venv .venv
 source .venv/bin/activate
 
@@ -61,6 +61,11 @@ pip install -e .
 ```
 
 #### On Windows (PowerShell):
+If PowerShell blocks running scripts, run once:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+Then create and activate your virtual environment:
 ```powershell
 # Create virtual environment
 python -m venv .venv
@@ -87,8 +92,32 @@ WiBreathe firmware builds with any modern ESP-IDF v5.x installed via the Espress
 *(To record your build environment, run `idf.py --version`)*
 
 ### 4.1 Activate ESP-IDF Environment
-- **macOS / Linux**: `source $HOME/esp/esp-idf/export.sh`
-- **Windows (PowerShell)**: `. $HOME\esp\esp-idf\export.ps1`
+
+#### On macOS and Linux:
+Depending on how Espressif Installation Manager placed ESP-IDF:
+```bash
+# Espressif Installation Manager default path:
+source $HOME/.espressif/v5.5.6/esp-idf/export.sh
+# Or standard manual clone path:
+# source $HOME/esp/esp-idf/export.sh
+
+idf.py --version
+```
+*(If `export.sh` reports Python environment missing, initialize once with `./install.sh esp32` inside that directory).*
+
+#### On Windows (PowerShell):
+Launch the **ESP-IDF 5.x PowerShell** shortcut created by the installer, or run:
+```powershell
+# If execution policy blocks scripts:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Activate ESP-IDF environment:
+. $env:USERPROFILE\.espressif\esp-idf-v5.x\export.ps1
+# Or standard path:
+# . $HOME\esp\esp-idf\export.ps1
+
+idf.py --version
+```
 
 ### 4.2 Transmitter Node (`firmware/csi_tx`)
 ```bash
@@ -193,13 +222,12 @@ python -m wibreathe eval --est data/processed/estimates.csv --ref data/reference
 
 ## 6. Serial Bandwidth Budget Table
 
-Throughput limit at 921,600 baud: **92.16 KB/s** ($921,600 / 10$ bits/byte).
+Throughput limit at 921,600 baud: **92.16 KB/s** ($921,600 / 10$ bits/byte). Actual line length is computed in firmware via `90 + (len * 7) / 2`.
 
 | Configuration | `len` (int8) | Subcarriers | Avg Line Length | 25 Hz Stream | 50 Hz Stream (Default) | 100 Hz Stream | 921.6k Bus Load (50 Hz) | Status |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **LLTF Only** (Classic ESP32) | **128** | 64 | **~390 bytes** | 9.75 KB/s | **19.5 KB/s** | 39.0 KB/s | **21.2%** | **RECOMMENDED** |
-| **HT-LTF Only** | **128** | 64 | **~390 bytes** | 9.75 KB/s | **19.5 KB/s** | 39.0 KB/s | **21.2%** | Supported |
-| **LLTF + HT-LTF** | **384** | 64 x 3 | **~1,100 bytes** | 27.5 KB/s | **55.0 KB/s** | **110.0 KB/s** (OVERFLOW) | **59.7%** | High load (100 Hz drops) |
+| **LLTF Only** (Classic ESP32) | **128** | 64 | **~540 bytes** | 13.5 KB/s | **27.0 KB/s** | 54.0 KB/s | **29.3%** | **RECOMMENDED (SAFE)** |
+| **LLTF + HT-LTF** | **384** | 64 x 3 | **~1,450 bytes** | 36.2 KB/s | **72.5 KB/s** | **145.0 KB/s** (OVERFLOW) | **78.7%** | High load (100 Hz drops) |
 
 ---
 
@@ -223,7 +251,7 @@ Throughput limit at 921,600 baud: **92.16 KB/s** ($921,600 / 10$ bits/byte).
 | **14** | **macOS terminal blocks on serial open** | Using `/dev/tty.*` instead of `/dev/cu.*` | `list-ports` and `SerialReader` automatically prefer `/dev/cu.*` calling devices. |
 | **15** | **DTR/RTS reset + ROM boot text** | Bridge DTR/RTS lines drive EN/GPIO0 | `SerialReader` opens port with `dtr=False, rts=False` before opening; discards boot text until first `CSI_DATA,` line. |
 | **16** | **Brownout detector reset** | Wi-Fi current spikes (~450-500 mA) drop VDD3V3 | Firmware logs `esp_reset_reason()` at boot and warns prominently on `ESP_RST_BROWNOUT`; use powered USB hub. |
-| **17** | **CSI length vs serial bandwidth overflow** | LLTF+HTLTF (384 values) @ 100 Hz requires ~110 KB/s | Exceeds 921,600 baud max throughput (92.16 KB/s). Default to LLTF-only (128 values) at 50 Hz (~19.5 KB/s). |
+| **17** | **CSI length vs serial bandwidth overflow** | LLTF+HTLTF (384 values) @ 100 Hz requires ~145 KB/s | Exceeds 921,600 baud max throughput (92.16 KB/s). Default to LLTF-only (128 values) at 50 Hz (~27.0 KB/s). |
 
 ---
 
@@ -241,8 +269,8 @@ data/
 
 ## 9. Ethics, Privacy & Limitations
 
-1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](file:///Users/rgo75/work/wibreathe/docs/TRIAL_PROTOCOL.md), including informed written consent and freedom to withdraw.
+1. **Human Volunteer Ethics**: All human data collection must strictly follow [docs/TRIAL_PROTOCOL.md](docs/TRIAL_PROTOCOL.md), including informed written consent and freedom to withdraw.
 2. **Participant Anonymity**: Never record names or identifiable health details. Use strictly de-identified keys (`V01`, `V02`).
-3. **RF Safety**: WiBreathe operates at standard Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP), well below FCC/ICNIRP human RF exposure limits.
+3. **RF Emissions**: WiBreathe operates within standard consumer 2.4 GHz Wi-Fi transmission power levels ($\le 20\text{ dBm}$ / $100\text{ mW}$ EIRP). While consumer Wi-Fi transmitters comply with FCC and ICNIRP general-public RF exposure standards, bedside antennas should maintain standard separation ($\ge 20\text{ cm}$) from human occupants during continuous monitoring.
 4. **Multipath Sensitivity**: Performance is subject to multipath changes from other moving individuals in the room. Controlled, single-occupant experimental rooms are required.
 5. **No Medical Claims**: Outputs represent experimental physical channel perturbations, not clinical respiratory parameters.

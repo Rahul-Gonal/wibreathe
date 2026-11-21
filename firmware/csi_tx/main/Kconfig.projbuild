@@ -3,9 +3,9 @@ menu "WiBreathe CSI Transmitter Configuration"
     config WIBREATHE_TX_CHANNEL
         int "Wi-Fi Primary Channel"
         default 6
-        range 1 13
+        range 1 11
         help
-            Primary 2.4 GHz channel for broadcast packets. Must match the receiver.
+            Primary 2.4 GHz channel for broadcast packets (channels 1-11). Must match the receiver.
 
     config WIBREATHE_TX_RATE_HZ
         int "Packet Transmission Cadence (Hz)"

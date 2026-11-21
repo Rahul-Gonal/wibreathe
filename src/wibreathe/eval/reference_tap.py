@@ -18,10 +18,11 @@ REFERENCE_CSV_HEADER = ["host_mono_time", "host_wall_time", "event_type", "notes
 class ReferenceTapLogger:
     """Records ground-truth breath taps and event tags using host high-precision timers."""
 
-    def __init__(self, output_csv_path: str | Path, volunteer_code: str = "V01"):
+    def __init__(self, output_csv_path: str | Path, volunteer_code: str = "V01", session: str = ""):
         self.output_csv = Path(output_csv_path)
         self.output_csv.parent.mkdir(parents=True, exist_ok=True)
         self.volunteer_code = volunteer_code
+        self.session = session
         self.events: List[Tuple[float, float, str, str]] = []
 
     def log_event(self, event_type: str, notes: str = "") -> None:

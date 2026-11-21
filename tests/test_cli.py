@@ -84,6 +84,105 @@ def test_cli_calibrate():
         ])
         assert ret_cal == 0
         assert Path(calib_out).is_file()
+        from wibreathe.state.calibration import BedCalibration
+        calib = BedCalibration.load(calib_out)
+        # Empty only must refuse to mark calibrated
+        assert calib.is_calibrated is False
+        assert calib.empty_calibrated is True
+        assert calib.occupied_calibrated is False
+
+
+def test_cli_guided_calibration_and_formats():
+    """Verify guided calibration recording both empty and occupied into single profile in json and yaml."""
+    from wibreathe.state.calibration import BedCalibration
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        empty_csv = str(tmp_path / "sim_empty.csv")
+        occ_csv = str(tmp_path / "sim_occ.csv")
+        calib_json = str(tmp_path / "calib.json")
+        calib_yaml = str(tmp_path / "calib.yaml")
+
+        main(["simulate", "--scenario", "empty", "--duration", "2.0", "--out", empty_csv])
+        main(["simulate", "--scenario", "still", "--duration", "2.0", "--out", occ_csv])
+
+        # 1. Guided JSON run
+        ret_json = main([
+            "calibrate",
+            "--mode", "guided",
+            "--empty-file", empty_csv,
+            "--occupied-file", occ_csv,
+            "--out", calib_json,
+        ])
+        assert ret_json == 0
+        assert Path(calib_json).is_file()
+        calib1 = BedCalibration.load(calib_json)
+        assert calib1.is_calibrated is True
+        assert calib1.empty_calibrated is True
+        assert calib1.occupied_calibrated is True
+
+        # 2. Guided YAML run
+        ret_yaml = main([
+            "calibrate",
+            "--mode", "guided",
+            "--empty-file", empty_csv,
+            "--occupied-file", occ_csv,
+            "--out", calib_yaml,
+        ])
+        assert ret_yaml == 0
+        assert Path(calib_yaml).is_file()
+        calib2 = BedCalibration.load(calib_yaml)
+        assert calib2.is_calibrated is True
+
+
+def test_cli_replay_est_out_and_calibration():
+    """Verify replay writes t,bpm,confidence,state to --est-out and accepts --calibration."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sim_csv = str(tmp_path / "sim.csv")
+        est_csv = str(tmp_path / "est.csv")
+        calib_json = str(tmp_path / "calib.json")
+
+        main(["simulate", "--scenario", "still", "--duration", "5.0", "--out", sim_csv])
+        main(["calibrate", "--mode", "guided", "--empty-file", sim_csv, "--occupied-file", sim_csv, "--out", calib_json])
+
+        ret_rep = main([
+            "replay",
+            "--file", sim_csv,
+            "--fast",
+            "--calibration", calib_json,
+            "--est-out", est_csv,
+        ])
+        assert ret_rep == 0
+        assert Path(est_csv).is_file()
+
+        with open(est_csv, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            assert len(lines) >= 2
+            assert lines[0].strip() == "t,bpm,confidence,state"
+
+
+def test_cli_plot_file_flag():
+    """Verify plot command accepts -f/--file and --out."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sim_csv = str(tmp_path / "sim.csv")
+        plot_out = str(tmp_path / "plot.png")
+
+        main(["simulate", "--duration", "2.0", "--out", sim_csv])
+        ret_plot = main(["plot", "-f", sim_csv, "-o", plot_out])
+        assert ret_plot == 0
+
+
+def test_cli_tap_session_flag():
+    """Verify tap tool accepts -s/--session flag without error."""
+    from wibreathe.eval.reference_tap import ReferenceTapLogger
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_csv = Path(tmpdir) / "tap.csv"
+        logger = ReferenceTapLogger(out_csv, volunteer_code="V01", session="sess_42")
+        assert logger.session == "sess_42"
+        logger.log_event("SESSION_START", "Observer began logging")
+        logger.save()
+        assert out_csv.is_file()
 
 
 def test_cli_eval_and_evaluate_alias():
@@ -114,5 +213,9 @@ if __name__ == "__main__":
     test_cli_list_ports()
     test_cli_simulate_and_replay()
     test_cli_calibrate()
+    test_cli_guided_calibration_and_formats()
+    test_cli_replay_est_out_and_calibration()
+    test_cli_plot_file_flag()
+    test_cli_tap_session_flag()
     test_cli_eval_and_evaluate_alias()
     print("All CLI tests passed.")

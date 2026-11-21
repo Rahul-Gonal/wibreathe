@@ -16,7 +16,7 @@ subcarriers:
   layout: "lltf_ht20"           # lltf_ht20 or htltf_ht20
   # UNVERIFIED on hardware: nominal null & DC guard bins
   null_indices: [0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]
-  selection_method: "variance"  # Options: 'variance', 'snr', 'pca', 'mean'
+  selection_method: "snr"       # Options: 'variance', 'snr', 'pca', 'mean'
   num_selected: 8               # Top subcarriers to retain for processing
   top_k: 8
 

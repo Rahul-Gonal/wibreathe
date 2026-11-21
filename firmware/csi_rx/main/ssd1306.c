@@ -105,6 +105,10 @@ static esp_err_t write_cmd(uint8_t cmd)
     return ret;
 }
 
+#ifndef CONFIG_WIBREATHE_OLED_I2C_FREQ_HZ
+#define CONFIG_WIBREATHE_OLED_I2C_FREQ_HZ 100000
+#endif
+
 esp_err_t ssd1306_init(i2c_port_t port, int sda_pin, int scl_pin, uint8_t i2c_addr)
 {
     s_i2c_port = port;
@@ -116,7 +120,7 @@ esp_err_t ssd1306_init(i2c_port_t port, int sda_pin, int scl_pin, uint8_t i2c_ad
         .scl_io_num = scl_pin,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .master.clk_speed = CONFIG_WIBREATHE_OLED_I2C_FREQ_HZ,
     };
     esp_err_t ret = i2c_param_config(s_i2c_port, &conf);
     if (ret != ESP_OK) {
